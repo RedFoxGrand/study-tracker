@@ -248,9 +248,19 @@ def open_lab_editor(page: ft.Page, refresh_ui, lab_id: int, subj_id: int, subj_n
     sync_date_blocks_visibility()
 
     steps_column = ft.Column(spacing=4)
+    reorder_mode = [False]  # Флаг режима сортировки
+
+    # Автоматическое превращение первой буквы в заглавную при вводе
+    def auto_cap(e):
+        val = e.control.value or ""
+        if len(val) == 1 and val[0].islower():
+            e.control.value = val[0].upper()
+            e.control.update()
+
     new_step_input = ft.TextField(
         hint_text="Добавить этап...",
         capitalization=ft.TextCapitalization.SENTENCES,
+        on_change=auto_cap,
         expand=True,
         dense=True,
         text_size=13,
@@ -279,8 +289,102 @@ def open_lab_editor(page: ft.Page, refresh_ui, lab_id: int, subj_id: int, subj_n
 
         sync_date_blocks_visibility()
 
+    def move_custom_step(idx: int, delta: int):
+        target_idx = idx + delta
+        if 1 <= target_idx < len(steps_data):
+            steps_data[idx], steps_data[target_idx] = steps_data[target_idx], steps_data[idx]
+            recalculate_status_from_steps()
+            render_steps_list()
+            page.update()
+
+    def toggle_reorder_mode(e):
+        reorder_mode[0] = not reorder_mode[0]
+        reorder_btn.text = "✓ Готово" if reorder_mode[0] else "↕️ Порядок"
+        reorder_btn.style = ft.ButtonStyle(color="#4ADE80" if reorder_mode[0] else "#38BDF8")
+        add_step_row.visible = not reorder_mode[0]
+        render_steps_list()
+        page.update()
+
+    reorder_btn = ft.TextButton(
+        "↕️ Порядок",
+        style=ft.ButtonStyle(color="#38BDF8"),
+        on_click=toggle_reorder_mode,
+    )
+
     def render_steps_list():
         steps_column.controls.clear()
+        reorder_btn.visible = len(steps_data) > 2
+
+        # --- РЕЖИМ 1: СОРТИРОВКА (Стрелки плотно рядом) ---
+        if reorder_mode[0]:
+            steps_column.controls.append(
+                ft.Container(
+                    height=42,
+                    bgcolor="#1E293B",
+                    padding=ft.Padding.only(left=10, right=10),
+                    border_radius=8,
+                    border=ft.Border.all(1, "#475569"),
+                    content=ft.Row(
+                        controls=[
+                            ft.Text("1. Защита у преподавателя", weight=ft.FontWeight.BOLD, size=13, color="#94A3B8", expand=True),
+                            ft.Container(
+                                width=56,
+                                alignment=ft.Alignment.CENTER_RIGHT,
+                                content=ft.Icon(ft.Icons.LOCK_OUTLINE_ROUNDED, size=17, color="#64748B"),
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                )
+            )
+            for idx in range(1, len(steps_data)):
+                step = steps_data[idx]
+                steps_column.controls.append(
+                    ft.Container(
+                        height=42,
+                        bgcolor="#1E293B",
+                        padding=ft.Padding.only(left=10, right=6),
+                        border_radius=8,
+                        border=ft.Border.all(1, "#38BDF8"),
+                        content=ft.Row(
+                            controls=[
+                                ft.Text(f"{idx + 1}. {step['title']}", weight=ft.FontWeight.W_600, size=13, expand=True),
+                                ft.Row(
+                                    controls=[
+                                        ft.IconButton(
+                                            icon=ft.Icons.ARROW_UPWARD_ROUNDED,
+                                            icon_size=18,
+                                            width=26,
+                                            padding=0,
+                                            visual_density=ft.VisualDensity.COMPACT,
+                                            disabled=(idx == 1),
+                                            tooltip="Выше",
+                                            on_click=lambda e, i=idx: move_custom_step(i, -1),
+                                        ),
+                                        ft.IconButton(
+                                            icon=ft.Icons.ARROW_DOWNWARD_ROUNDED,
+                                            icon_size=18,
+                                            width=26,
+                                            padding=0,
+                                            visual_density=ft.VisualDensity.COMPACT,
+                                            disabled=(idx == len(steps_data) - 1),
+                                            tooltip="Ниже",
+                                            on_click=lambda e, i=idx: move_custom_step(i, 1),
+                                        ),
+                                    ],
+                                    spacing=2,
+                                    alignment=ft.MainAxisAlignment.END,
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                    )
+                )
+            return
+
+        # --- РЕЖИМ 2: ОБЫЧНЫЙ (Замочек и крестики идеально симметричны) ---
         for idx, step in enumerate(steps_data):
             is_locked = step.get("locked", False)
 
@@ -294,18 +398,20 @@ def open_lab_editor(page: ft.Page, refresh_ui, lab_id: int, subj_id: int, subj_n
 
             if is_locked:
                 step_row = ft.Container(
+                    height=42,
                     bgcolor="#1E293B",
-                    padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                    padding=ft.Padding.only(left=6, right=6),
                     border_radius=8,
                     border=ft.Border.all(1, "#22C55E" if step["is_done"] else "#475569"),
                     content=ft.Row(
                         controls=[
                             ft.Checkbox(value=step["is_done"], on_change=on_check_change),
-                            ft.Text(
-                                f"🛡️ {step['title']}",
-                                weight=ft.FontWeight.BOLD,
-                                size=13,
-                                expand=True,
+                            ft.Text(f"{step['title']}", weight=ft.FontWeight.BOLD, size=13, expand=True),
+                            ft.Container(
+                                width=28,
+                                height=28,
+                                alignment=ft.Alignment.CENTER,
+                                content=ft.Icon(ft.Icons.LOCK_OUTLINE_ROUNDED, size=17, color="#64748B"),
                             ),
                         ],
                         spacing=4,
@@ -314,7 +420,12 @@ def open_lab_editor(page: ft.Page, refresh_ui, lab_id: int, subj_id: int, subj_n
                 )
             else:
                 def on_title_change(e, i=idx):
-                    steps_data[i]["title"] = e.control.value
+                    val = e.control.value or ""
+                    if len(val) == 1 and val[0].islower():
+                        val = val[0].upper()
+                        e.control.value = val
+                        e.control.update()
+                    steps_data[i]["title"] = val
 
                 def on_delete_step(e, i=idx):
                     steps_data.pop(i)
@@ -322,29 +433,43 @@ def open_lab_editor(page: ft.Page, refresh_ui, lab_id: int, subj_id: int, subj_n
                     render_steps_list()
                     page.update()
 
-                step_row = ft.Row(
-                    controls=[
-                        ft.Checkbox(value=step["is_done"], on_change=on_check_change),
-                        ft.TextField(
-                            value=step["title"],
-                            on_change=on_title_change,
-                            capitalization=ft.TextCapitalization.SENTENCES,
-                            expand=True,
-                            dense=True,
-                            text_size=13,
-                            content_padding=ft.Padding.symmetric(horizontal=8, vertical=8),
-                        ),
-                        ft.IconButton(
-                            icon=ft.Icons.CLOSE_ROUNDED,
-                            icon_size=18,
-                            visual_density=ft.VisualDensity.COMPACT,
-                            icon_color=ft.Colors.RED_300,
-                            tooltip="Удалить этап",
-                            on_click=on_delete_step,
-                        ),
-                    ],
-                    spacing=2,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                step_row = ft.Container(
+                    height=42,
+                    bgcolor="#1E293B",
+                    padding=ft.Padding.only(left=6, right=6),
+                    border_radius=8,
+                    border=ft.Border.all(1, "#22C55E" if step["is_done"] else "#334155"),
+                    content=ft.Row(
+                        controls=[
+                            ft.Checkbox(value=step["is_done"], on_change=on_check_change),
+                            ft.TextField(
+                                value=step["title"],
+                                on_change=on_title_change,
+                                capitalization=ft.TextCapitalization.SENTENCES,
+                                expand=True,
+                                dense=True,
+                                text_size=13,
+                                border=ft.InputBorder.NONE,
+                                content_padding=ft.Padding.symmetric(horizontal=4, vertical=0),
+                            ),
+                            ft.Container(
+                                width=28,
+                                height=28,
+                                alignment=ft.Alignment.CENTER,
+                                content=ft.IconButton(
+                                    icon=ft.Icons.CLOSE_ROUNDED,
+                                    icon_size=18,
+                                    padding=0,
+                                    visual_density=ft.VisualDensity.COMPACT,
+                                    icon_color=ft.Colors.RED_300,
+                                    tooltip="Удалить этап",
+                                    on_click=on_delete_step,
+                                ),
+                            ),
+                        ],
+                        spacing=4,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                 )
             steps_column.controls.append(step_row)
 
@@ -352,6 +477,7 @@ def open_lab_editor(page: ft.Page, refresh_ui, lab_id: int, subj_id: int, subj_n
         txt = new_step_input.value.strip()
         if not txt:
             return
+        txt = txt[0].upper() + txt[1:]
         steps_data.append({"title": txt, "is_done": False, "locked": False})
         new_step_input.value = ""
         if steps_data[0]["is_done"]:
@@ -359,6 +485,31 @@ def open_lab_editor(page: ft.Page, refresh_ui, lab_id: int, subj_id: int, subj_n
         recalculate_status_from_steps()
         render_steps_list()
         page.update()
+
+    new_step_input.on_submit = add_custom_step
+
+    add_step_row = ft.Row(
+        controls=[
+            new_step_input,
+            ft.IconButton(
+                icon=ft.Icons.ADD_CIRCLE_ROUNDED,
+                icon_color="#22C55E",
+                visual_density=ft.VisualDensity.COMPACT,
+                tooltip="Добавить этап",
+                on_click=add_custom_step,
+            ),
+        ],
+        spacing=4,
+    )
+
+    checklist_header = ft.Row(
+        controls=[
+            ft.Text("Чек-лист этапов:", weight=ft.FontWeight.BOLD, size=15),
+            reorder_btn,
+        ],
+        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
 
     def on_manual_status_select(e):
         st_val = int(status_dropdown.value)
@@ -441,21 +592,9 @@ def open_lab_editor(page: ft.Page, refresh_ui, lab_id: int, subj_id: int, subj_n
         goal_input,
         desc_input,
         ft.Divider(height=4),
-        ft.Text("Чек-лист этапов:", weight=ft.FontWeight.BOLD, size=15),
+        checklist_header,
         steps_column,
-        ft.Row(
-            controls=[
-                new_step_input,
-                ft.IconButton(
-                    icon=ft.Icons.ADD_CIRCLE_ROUNDED,
-                    icon_color="#22C55E",
-                    visual_density=ft.VisualDensity.COMPACT,
-                    tooltip="Добавить свой этап",
-                    on_click=add_custom_step,
-                ),
-            ],
-            spacing=4,
-        ),
+        add_step_row,
         ft.Divider(height=4),
         dates_group_box,
         comment_input,
@@ -1479,6 +1618,73 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
     end_ui, get_end_val, _ = create_date_picker_block(page, "Конец семестра", "🎓", cur_end)
     sem_dates_group = ft.Column([start_ui, end_ui], spacing=0, tight=True)
 
+    bg_input = ft.TextField(
+        label="URL фонового изображения",
+        value=get_setting("bg_image_url", ""),
+        hint_text="https://... или оставьте пустым",
+        dense=True,
+        text_size=12,
+    )
+
+    theme_chip_containers = {}
+    presets = [
+        ("🌌 Космос", "/space.jpg"),
+        ("🔮 Абстракция", "/abstract.jpg"),
+        ("🚫 Без фона", ""),
+    ]
+
+    # Функция мгновенного перемещения синей рамки на нажатую кнопку
+    def update_theme_chips_borders(active_url: str):
+        for u_val, chip_ctrl in theme_chip_containers.items():
+            is_active = (u_val == active_url)
+            chip_ctrl.border = ft.Border.all(1.5 if is_active else 1, "#38BDF8" if is_active else "#334155")
+        page.update()
+
+    def set_preset_bg(url_val: str):
+        bg_input.value = url_val
+        update_theme_chips_borders(url_val)
+
+    theme_chips = ft.Row(spacing=6)
+    for label, u_val in presets:
+        is_init_active = (bg_input.value.strip() == u_val)
+        chip = ft.Container(
+            expand=1,
+            height=34,
+            bgcolor="#1E293B",
+            border_radius=8,
+            border=ft.Border.all(1.5 if is_init_active else 1, "#38BDF8" if is_init_active else "#334155"),
+            alignment=ft.Alignment.CENTER,
+            content=ft.Text(label, size=11, color="white", no_wrap=True),
+            on_click=lambda e, u=u_val: set_preset_bg(u),
+        )
+        theme_chip_containers[u_val] = chip
+        theme_chips.controls.append(chip)
+
+    # Если пользователь вставит ссылку вручную — кнопки снимут выделение
+    bg_input.on_change = lambda e: update_theme_chips_borders(bg_input.value.strip())
+
+    
+    cur_bg_op = int(get_setting("bg_opacity", "25"))
+    cur_card_op = int(get_setting("card_opacity", "75"))
+
+    bg_op_label = ft.Text(f"Яркость фона: {cur_bg_op}%", size=12, color=ft.Colors.GREY_300)
+    bg_op_slider = ft.Slider(
+        min=0,
+        max=100,
+        divisions=20,
+        value=cur_bg_op,
+        on_change=lambda e: (setattr(bg_op_label, "value", f"Яркость фона: {int(e.control.value)}%"), page.update()),
+    )
+
+    card_op_label = ft.Text(f"Плотность карточек: {cur_card_op}%", size=12, color=ft.Colors.GREY_300)
+    card_op_slider = ft.Slider(
+        min=0,
+        max=100,
+        divisions=20,
+        value=cur_card_op,
+        on_change=lambda e: (setattr(card_op_label, "value", f"Плотность карточек: {int(e.control.value)}%"), page.update()),
+    )
+
     new_group_input = ft.TextField(
         label="Номер группы",
         keyboard_type=ft.KeyboardType.NUMBER,
@@ -1626,7 +1832,10 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
             set_setting("semester_start", get_start_val())
         if get_end_val():
             set_setting("semester_end", get_end_val())
-        set_setting("view_group", state["view_grp"])
+        set_setting("view_group", state["view_grp"] or "")
+        set_setting("bg_image_url", bg_input.value.strip())
+        set_setting("bg_opacity", str(int(bg_op_slider.value))) 
+        set_setting("card_opacity", str(int(card_op_slider.value)))  
         page.pop_dialog()
         refresh_ui()
 
@@ -1649,6 +1858,15 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
             ft.Divider(height=6),
             ft.Text("2. Границы семестра:", weight=ft.FontWeight.BOLD, size=13, color="#38BDF8"),
             sem_dates_group,
+            ft.Divider(height=6),
+            ft.Text("3. Оформление и фон:", weight=ft.FontWeight.BOLD, size=13, color="#38BDF8"),
+            theme_chips,
+            bg_input,
+            ft.Container(height=4),
+            bg_op_label,
+            bg_op_slider,
+            card_op_label,
+            card_op_slider,
         ], scrollable=True),
         actions=[ft.FilledButton("Сохранить", on_click=save_settings)],
         actions_alignment=ft.MainAxisAlignment.END,

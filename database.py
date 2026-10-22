@@ -210,6 +210,7 @@ def set_setting(key: str, value: str):
 
 
 def ensure_group_labs_initialized(group_name: str):
+    """Универсальная генерация 4 лаб по умолчанию для любой группы БГУИР."""
     grp = group_name.strip()
     if not grp:
         return
@@ -228,8 +229,7 @@ def ensure_group_labs_initialized(group_name: str):
             continue
         cur.execute("SELECT COUNT(*) FROM labs WHERE subject_id = ?", (s_id,))
         if cur.fetchone()[0] == 0:
-            count = 4
-            for i in range(1, count + 1):
+            for i in range(1, 5):
                 cur.execute("INSERT INTO labs (subject_id, lab_num, status) VALUES (?, ?, 0)", (s_id, i))
                 ensure_base_step_for_lab(cur, cur.lastrowid, 0)
             cur.execute("UPDATE subjects SET is_tracked = 1 WHERE id = ?", (s_id,))

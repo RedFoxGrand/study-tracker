@@ -37,7 +37,7 @@ jobs:
 
       - name: Build Android APK via Flet
         run: |
-          yes | flet build apk --project "study_tracker" --product "Трекер лаб" --org "com.bsuir.studyapp"
+          yes | flet build apk --project "study_tracker" --product "Трекер лаб" --org "com.bsuir.studyapp" --assets "assets" --icon "assets/icon.png"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4

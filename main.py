@@ -40,13 +40,33 @@ from dialogs import (
     open_schedule_settings_dialog,
 )
 
+BG_OPACITY = 0.45  # Чем выше число (от 0.0 до 1.0), тем ярче и отчетливее картинка
+card_bg = "#B31E293B"  # 70% плотности плиток (фон будет красиво просвечивать)
 
 def main(page: ft.Page):
+    def get_card_bgcolor() -> str:
+        """Цвет внешних карточек с учётом прозрачности."""
+        op = max(0, min(100, int(get_setting("card_opacity", "75"))))
+        alpha = int(255 * (op / 100))
+        return f"#{alpha:02X}1E293B"
+
+    def get_inner_bgcolor() -> str:
+        """Цвет внутренних блоков (пары, чипы, кнопки), гармонирующий с фоном."""
+        op = max(0, min(100, int(get_setting("card_opacity", "75"))))
+        # Делаем внутренние блоки чуть глубже (коэффициент 0.75 от общей плотности)
+        alpha = int(255 * (op / 100) * 0.75)
+        return f"#{alpha:02X}1E293B"
+
+    def get_bg_opacity() -> float:
+        """Переводит проценты (0..100%) в float-коэффициент от 0.0 до 1.0."""
+        op = max(0, min(100, int(get_setting("bg_opacity", "25"))))
+        return op / 100.0
+    
     page.title = "Трекер лаб"
     page.theme_mode = ft.ThemeMode.DARK
     page.window.width = 440
     page.window.height = 880
-    page.padding = ft.Padding.only(top=10, left=10, right=4, bottom=4)
+    page.padding = 0
 
     page.theme = ft.Theme(
         scrollbar_theme=ft.ScrollbarTheme(
@@ -168,6 +188,8 @@ def main(page: ft.Page):
     # --- ВКЛАДКА 1: СВОДКА И ТАБЛИЦА ЛАБ ---
     def render_subjects_tab(deadline_alerts, planned_alerts):
         urgent_tiles_refs.clear()
+        card_bg = get_card_bgcolor()
+        inner_bg = get_inner_bgcolor()
         main_grp = get_setting("main_group", "")
         main_sub = int(get_setting("main_subgroup", "1") or 0)
         sub_txt = "обе подгр." if main_sub == 0 else f"{main_sub} подгр."
@@ -217,8 +239,12 @@ def main(page: ft.Page):
         )
 
         summary_card = ft.Card(
+            bgcolor=card_bg,
+            elevation=0,
             content=ft.Container(
                 padding=12,
+                border_radius=12,
+                border=ft.Border.all(1, "#334155"),
                 content=ft.Column(
                     controls=[
                         ft.Row(
@@ -239,7 +265,7 @@ def main(page: ft.Page):
                             controls=[
                                 ft.Text(f"Моя группа: {main_grp} ({sub_txt})", size=12.5, color="#38BDF8", weight=ft.FontWeight.W_600, expand=True),
                                 ft.Container(
-                                    bgcolor="#1E293B",
+                                    bgcolor=inner_bg,
                                     padding=ft.Padding.symmetric(horizontal=10, vertical=4),
                                     border_radius=6,
                                     border=ft.Border.all(1, "#38BDF8"),
@@ -267,10 +293,10 @@ def main(page: ft.Page):
                         ),
                         ft.Row(
                             controls=[
-                                ft.Container(expand=1, alignment=ft.Alignment.CENTER, bgcolor="#1E293B", border=ft.Border.all(1, "#EF4444"), padding=ft.Padding.symmetric(vertical=5), border_radius=8, content=ft.Text(f"🔴 {counts[0]}", size=12, color="#EF4444", weight=ft.FontWeight.W_600)),
-                                ft.Container(expand=1, alignment=ft.Alignment.CENTER, bgcolor="#1E293B", border=ft.Border.all(1, "#F97316"), padding=ft.Padding.symmetric(vertical=5), border_radius=8, content=ft.Text(f"🟠 {counts[1]}", size=12, color="#F97316", weight=ft.FontWeight.W_600)),
-                                ft.Container(expand=1, alignment=ft.Alignment.CENTER, bgcolor="#1E293B", border=ft.Border.all(1, "#EAB308"), padding=ft.Padding.symmetric(vertical=5), border_radius=8, content=ft.Text(f"🟡 {counts[2]}", size=12, color="#EAB308", weight=ft.FontWeight.W_600)),
-                                ft.Container(expand=1, alignment=ft.Alignment.CENTER, bgcolor="#1E293B", border=ft.Border.all(1, "#22C55E"), padding=ft.Padding.symmetric(vertical=5), border_radius=8, content=ft.Text(f"🟢 {counts[3]}", size=12, color="#22C55E", weight=ft.FontWeight.W_600)),
+                                ft.Container(expand=1, alignment=ft.Alignment.CENTER, bgcolor=inner_bg, border=ft.Border.all(1, "#EF4444"), padding=ft.Padding.symmetric(vertical=5), border_radius=8, content=ft.Text(f"🔴 {counts[0]}", size=12, color="#EF4444", weight=ft.FontWeight.W_600)),
+                                ft.Container(expand=1, alignment=ft.Alignment.CENTER, bgcolor=inner_bg, border=ft.Border.all(1, "#F97316"), padding=ft.Padding.symmetric(vertical=5), border_radius=8, content=ft.Text(f"🟠 {counts[1]}", size=12, color="#F97316", weight=ft.FontWeight.W_600)),
+                                ft.Container(expand=1, alignment=ft.Alignment.CENTER, bgcolor=inner_bg, border=ft.Border.all(1, "#EAB308"), padding=ft.Padding.symmetric(vertical=5), border_radius=8, content=ft.Text(f"🟡 {counts[2]}", size=12, color="#EAB308", weight=ft.FontWeight.W_600)),
+                                ft.Container(expand=1, alignment=ft.Alignment.CENTER, bgcolor=inner_bg, border=ft.Border.all(1, "#22C55E"), padding=ft.Padding.symmetric(vertical=5), border_radius=8, content=ft.Text(f"🟢 {counts[3]}", size=12, color="#22C55E", weight=ft.FontWeight.W_600)),
                             ],
                             spacing=6,
                         ),
@@ -368,7 +394,7 @@ def main(page: ft.Page):
                 ft.Container(
                     width=44,
                     height=44,
-                    bgcolor="#1E293B",
+                    bgcolor=inner_bg,
                     border_radius=8,
                     border=ft.Border.all(1, "#475569"),
                     alignment=ft.Alignment.CENTER,
@@ -432,12 +458,23 @@ def main(page: ft.Page):
                     card_rows.extend(sched_lines)
 
             content_area.controls.append(
-                ft.Card(content=ft.Container(padding=12, content=ft.Column(card_rows, spacing=6)))
+                ft.Card(
+                    bgcolor=card_bg,
+                    elevation=0,
+                    content=ft.Container(
+                        padding=12,
+                        border_radius=12,
+                        border=ft.Border.all(1, "#334155"),
+                        content=ft.Column(card_rows, spacing=6),
+                    ),
+                )
             )
 
     # --- ВКЛАДКА 2: ДЕДЛАЙНЫ И ОЧЕРЕДЬ СДАЧИ ---
     def render_deadlines_tab(deadline_alerts, planned_alerts):
         urgent_tiles_refs.clear()
+        card_bg = get_card_bgcolor()
+        inner_bg = get_inner_bgcolor()
         main_grp = get_setting("main_group", "")
 
         if not main_grp:
@@ -468,7 +505,7 @@ def main(page: ft.Page):
         def make_filter_chip(mode_key: str, label: str):
             is_active = cur_mode == mode_key
             return ft.Container(
-                bgcolor="#2563EB" if is_active else "#1E293B",
+                bgcolor="#2563EB" if is_active else inner_bg,
                 padding=ft.Padding.symmetric(horizontal=10, vertical=7),
                 border_radius=8,
                 border=ft.Border.all(1, "#38BDF8" if is_active else "#334155"),
@@ -643,6 +680,8 @@ def main(page: ft.Page):
 
             content_area.controls.append(
                 ft.Card(
+                    bgcolor=card_bg,
+                    elevation=0,
                     content=ft.Container(
                         border=card_border,
                         border_radius=12,
@@ -663,6 +702,8 @@ def main(page: ft.Page):
     # --- ВКЛАДКА 3: ПРОСМОТР РАСПИСАНИЯ ---
     def render_schedule_tab():
         urgent_tiles_refs.clear()
+        card_bg = get_card_bgcolor()
+        inner_bg = get_inner_bgcolor()
         today = datetime.date.today()
         sem_start = parse_date_safe(get_setting("semester_start", "2026-09-01")) or datetime.date(2026, 9, 1)
         sem_end = parse_date_safe(get_setting("semester_end", "2026-12-26")) or datetime.date(2026, 12, 26)
@@ -704,7 +745,7 @@ def main(page: ft.Page):
             is_active_g = g_name == view_grp
             group_switch_chips.append(
                 ft.Container(
-                    bgcolor="#2563EB" if is_active_g else "#1E293B",
+                    bgcolor="#2563EB" if is_active_g else inner_bg,
                     padding=ft.Padding.symmetric(horizontal=10, vertical=5),
                     border_radius=6,
                     border=ft.Border.all(1, "#38BDF8" if is_active_g else "#334155"),
@@ -725,7 +766,7 @@ def main(page: ft.Page):
                 ft.Container(
                     expand=1,
                     alignment=ft.Alignment.CENTER,
-                    bgcolor="#0C4A6E" if is_act_s else "#1E293B",
+                    bgcolor="#0C4A6E" if is_act_s else inner_bg,
                     padding=ft.Padding.symmetric(horizontal=6, vertical=5),
                     border_radius=6,
                     border=ft.Border.all(1, "#38BDF8" if is_act_s else "#334155"),
@@ -741,8 +782,12 @@ def main(page: ft.Page):
             )
 
         top_info_card = ft.Card(
+            bgcolor=card_bg,
+            elevation=0,
             content=ft.Container(
                 padding=12,
+                border_radius=12,
+                border=ft.Border.all(1, "#334155"),
                 content=ft.Column(
                     controls=[
                         ft.Row(
@@ -796,7 +841,7 @@ def main(page: ft.Page):
         def make_week_chip(key_val: str, txt: str, is_current_wk: bool = False):
             is_sel = cur_view == key_val
             return ft.Container(
-                bgcolor="#2563EB" if is_sel else "#1E293B",
+                bgcolor="#2563EB" if is_sel else inner_bg,
                 padding=ft.Padding.symmetric(horizontal=10, vertical=7),
                 border_radius=8,
                 border=ft.Border.all(1.5, "#38BDF8" if is_current_wk else ("#3B82F6" if is_sel else "#334155")),
@@ -886,7 +931,7 @@ def main(page: ft.Page):
                     meta_badges.append(ft.Text("🟢 Все лабы по предмету сданы!", size=11, color="#4ADE80"))
 
             return ft.Container(
-                bgcolor="#1E293B",
+                bgcolor=inner_bg,
                 padding=10,
                 border_radius=8,
                 border=ft.Border.all(1, "#334155"),
@@ -895,11 +940,11 @@ def main(page: ft.Page):
                     controls=[
                         ft.Column(
                             controls=[
-                                ft.Text(st_time, weight=ft.FontWeight.BOLD, size=15, color="white"),
+                                ft.Text(st_time, weight=ft.FontWeight.BOLD, size=16.5, color="white"),
                                 ft.Text(end_time, size=11, color=ft.Colors.GREY_400),
                             ],
                             spacing=1,
-                            width=46,
+                            width=52,
                             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                         ft.Container(width=3, height=48, bgcolor=t_cfg["color"], border_radius=2),
@@ -914,7 +959,7 @@ def main(page: ft.Page):
                                             border=ft.Border.all(1, t_cfg["color"]),
                                             content=ft.Text(l_type, size=10, weight=ft.FontWeight.BOLD, color=t_cfg["color"]),
                                         ),
-                                        ft.Text(s_name, weight=ft.FontWeight.BOLD, size=14, expand=True),
+                                        ft.Text(s_name, weight=ft.FontWeight.BOLD, size=16, expand=True),
                                     ],
                                     spacing=6,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -959,7 +1004,7 @@ def main(page: ft.Page):
                 meta_lines.append(ft.Text(f"📝 {clean_desc}", size=11, color=ft.Colors.GREY_400))
 
             return ft.Container(
-                bgcolor="#1E293B",
+                bgcolor=inner_bg,
                 padding=10,
                 border_radius=8,
                 border=ft.Border.all(1, "#475569"),
@@ -968,11 +1013,11 @@ def main(page: ft.Page):
                     controls=[
                         ft.Column(
                             controls=[
-                                ft.Text(st_time, weight=ft.FontWeight.BOLD, size=15, color="white"),
+                                ft.Text(st_time, weight=ft.FontWeight.BOLD, size=16.5, color="white"),
                                 ft.Text(end_time, size=11, color=ft.Colors.GREY_400),
                             ],
                             spacing=1,
-                            width=46,
+                            width=52,
                             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                         ft.Container(width=3, height=48, bgcolor=t_cfg["color"], border_radius=2),
@@ -987,7 +1032,7 @@ def main(page: ft.Page):
                                             border=ft.Border.all(1, t_cfg["color"]),
                                             content=ft.Text("СОБ", size=10, weight=ft.FontWeight.BOLD, color=t_cfg["color"]),
                                         ),
-                                        ft.Text(display_title, weight=ft.FontWeight.BOLD, size=14, expand=True, no_wrap=True),
+                                        ft.Text(display_title, weight=ft.FontWeight.BOLD, size=16, expand=True, no_wrap=True),
                                     ],
                                     spacing=6,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1066,12 +1111,14 @@ def main(page: ft.Page):
 
                 content_area.controls.append(
                     ft.Card(
+                        bgcolor=card_bg,
+                        elevation=0,
                         content=ft.Container(
                             padding=12,
-                            border=ft.Border.all(1.5, "#38BDF8") if offset == 0 else None,
+                            border=ft.Border.all(1.5, "#38BDF8") if offset == 0 else ft.Border.all(1, "#334155"),
                             border_radius=12,
                             content=ft.Column(day_controls, spacing=8),
-                        )
+                        ),
                     )
                 )
 
@@ -1146,12 +1193,14 @@ def main(page: ft.Page):
 
                 content_area.controls.append(
                     ft.Card(
+                        bgcolor=card_bg,
+                        elevation=0,
                         content=ft.Container(
                             padding=12,
-                            border=ft.Border.all(1.5, "#38BDF8") if is_today_day else None,
+                            border=ft.Border.all(1.5, "#38BDF8") if is_today_day else ft.Border.all(1, "#334155"),
                             border_radius=12,
                             content=ft.Column(day_controls, spacing=8),
-                        )
+                        ),
                     )
                 )
 
@@ -1171,6 +1220,7 @@ def main(page: ft.Page):
             deadline_alerts, planned_alerts = [], []
 
         fab.tooltip = "Добавить пару в расписание" if nav_bar.selected_index == 2 else "Добавить предмет"
+        fab.visible = (nav_bar.selected_index == 0)
 
         content_area.controls.clear()
         if nav_bar.selected_index == 0:
@@ -1179,6 +1229,14 @@ def main(page: ft.Page):
             render_deadlines_tab(deadline_alerts, planned_alerts)
         else:
             render_schedule_tab()
+
+        nav_bar.bgcolor = get_card_bgcolor()
+
+        bg_url = get_setting("bg_image_url", "")
+        main_container.image = (
+            ft.DecorationImage(src=bg_url, fit="cover", opacity=get_bg_opacity())
+            if bg_url else None
+        )
         page.update()
 
     async def pulse_urgent_tiles_loop():
@@ -1206,6 +1264,8 @@ def main(page: ft.Page):
             open_add_subject_dialog(page, refresh_ui)
 
     nav_bar = ft.NavigationBar(
+        bgcolor=get_card_bgcolor(),
+        elevation=0,
         selected_index=0,
         on_change=lambda e: refresh_ui(),
         destinations=[
@@ -1219,12 +1279,20 @@ def main(page: ft.Page):
     page.floating_action_button = fab
     page.navigation_bar = nav_bar
 
-    page.add(
-        ft.SafeArea(
+    bg_url = get_setting("bg_image_url", "")
+    main_container = ft.Container(
+        expand=True,
+        image=ft.DecorationImage(src=bg_url, fit="cover", opacity=get_bg_opacity()) if bg_url else None,
+        content=ft.SafeArea(
             expand=True,
-            content=ft.Column(controls=[toast_banner, content_wrapper], expand=True, spacing=8),
-        )
+            content=ft.Container(
+                padding=ft.Padding.only(top=10, left=10, right=4, bottom=4),
+                content=ft.Column(controls=[toast_banner, content_wrapper], expand=True, spacing=8),
+            ),
+        ),
     )
+    page.add(main_container)
+    
     refresh_ui()
     page.run_task(pulse_urgent_tiles_loop)
 
@@ -1247,4 +1315,4 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.run(main)
+    ft.run(main, assets_dir="assets")
