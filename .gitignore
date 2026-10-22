@@ -1,0 +1,16 @@
+# Временные файлы Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Служебные файлы и локальные базы Flet
+.flet/
+*.db
+*.sqlite3
+
+# Папки сборки и виртуальные окружения
+build/
+dist/
+.venv/
+venv/
+*.apk
