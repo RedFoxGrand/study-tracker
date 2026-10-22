@@ -19,9 +19,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Flutter
+      - name: Set up Flutter 3.24.5
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.24.5'
           channel: 'stable'
 
       - name: Set up Python
@@ -36,7 +37,7 @@ jobs:
 
       - name: Build Android APK via Flet
         run: |
-          flet build apk --project "Трекер лаб" --org "com.bsuir.studyapp"
+          yes | flet build apk --project "study_tracker" --product "Трекер лаб" --org "com.bsuir.studyapp"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
