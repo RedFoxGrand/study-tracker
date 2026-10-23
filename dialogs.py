@@ -11,22 +11,22 @@ from config import (
 )
 from database import (
     NON_LAB_SUBJECTS,
-    add_custom_theme_from_url,
     cleanup_orphan_and_non_lab_subjects,
     compute_subject_lr_analytics,
-    delete_custom_theme,
     delete_saved_group_schedule,
     ensure_base_step_for_lab,
     ensure_group_labs_initialized,
     get_categorized_alerts,
     get_conn,
-    get_custom_themes,
     get_dropdown_subjects_for_schedule,
     get_saved_groups,
     get_setting,
     import_schedule_from_bsuir_api,
     renumber_subject_labs,
     set_setting,
+    add_custom_theme,
+    delete_custom_theme,
+    get_custom_themes,
 )
 
 CUSTOM_SUBJ_KEY = "__custom_new_subject__"
@@ -1630,15 +1630,15 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
         "/forest.jpg": "🌲 Туманный лес",
         "/mountains.jpg": "🏔️ Ночные горы",
         "/ocean.jpg": "🌊 Глубокий океан",
-        "/evening.jpg": "☕ Лоу-фай вечер",
-        "/minimal.jpg": "⬛ Минимализм",
+        "/lofi.jpg": "☕ Лоу-фай вечер",
+        "/minimal.jpg": "⬛ Тёмный минимализм",
         "": "🚫 Без фона",
     }
 
-    # Если значение не начинается со слеша и не пустое — это Base64-тема
-    is_custom_active = bool(cur_bg and not cur_bg.startswith("/"))
+    is_custom_active = cur_bg.startswith(("http://", "https://"))
     mode_state = {"tab": "custom" if is_custom_active else "builtin"}
 
+    # Выпадающий список встроенных тем
     builtin_dd = ft.Dropdown(
         label="Встроенная тема",
         value=cur_bg if cur_bg in built_in_options else "",
@@ -1652,6 +1652,7 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
 
     builtin_dd.on_select = on_builtin_change
 
+    # Элементы пользовательских тем
     custom_themes_dd = ft.Dropdown(
         label="Моя сохранённая тема",
         expand=True,
@@ -1673,8 +1674,8 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
         ]
         cur_active = get_setting("bg_image_url", "")
         matched_id = None
-        for t_id, _, b64_val in custom_state["themes"]:
-            if b64_val == cur_active:
+        for t_id, _, t_url in custom_state["themes"]:
+            if t_url == cur_active:
                 matched_id = str(t_id)
                 break
         custom_themes_dd.value = matched_id
@@ -1684,9 +1685,9 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
         sel_id = custom_themes_dd.value
         if not sel_id:
             return
-        for t_id, _, b64_val in custom_state["themes"]:
+        for t_id, _, t_url in custom_state["themes"]:
             if str(t_id) == sel_id:
-                set_setting("bg_image_url", b64_val)
+                set_setting("bg_image_url", t_url)
                 refresh_ui()
                 break
         delete_theme_btn.visible = True
@@ -1716,25 +1717,17 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
         )
         url_in = ft.TextField(label="Прямая ссылка на фото (URL)", hint_text="https://...", dense=True)
         err_lbl = ft.Text("", size=11, color="#EF4444", visible=False)
-        prog_bar = ft.ProgressBar(visible=False)
 
-        def do_download(ev):
+        def do_save(ev):
             err_lbl.visible = False
-            prog_bar.visible = True
-            page.update()
-
-            raw_name = name_in.value.strip()
-            theme_title = (raw_name[0].upper() + raw_name[1:]) if raw_name else ""
-
-            ok, res_b64 = add_custom_theme_from_url(theme_title, url_in.value)
-            prog_bar.visible = False
+            ok, res = add_custom_theme(name_in.value, url_in.value)
             if not ok:
-                err_lbl.value = f"⚠️ {res_b64}"
+                err_lbl.value = f"⚠️ {res}"
                 err_lbl.visible = True
                 page.update()
                 return
 
-            set_setting("bg_image_url", res_b64)
+            set_setting("bg_image_url", res)
             reload_custom_dd()
             refresh_ui()
             page.pop_dialog()
@@ -1742,14 +1735,15 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
 
         add_dlg = ft.AlertDialog(
             title=make_dialog_header(page, "➕ Новая тема"),
-            content=ft.Column([name_in, url_in, prog_bar, err_lbl], tight=True, spacing=8),
-            actions=[ft.FilledButton("Скачать и сохранить", on_click=do_download)],
+            content=ft.Column([name_in, url_in, err_lbl], tight=True, spacing=8),
+            actions=[ft.FilledButton("Сохранить", on_click=do_save)],
         )
         page.show_dialog(add_dlg)
 
     add_theme_btn = ft.FilledButton("➕ Добавить тему", on_click=open_add_theme_dialog)
     reload_custom_dd()
 
+    # Переключатель вкладок
     theme_tabs_row = ft.Row(spacing=6)
     builtin_box = ft.Container(content=builtin_dd, visible=not is_custom_active)
     custom_box = ft.Column(

@@ -1213,9 +1213,8 @@ def main(page: ft.Page):
         bg_val = get_setting("bg_image_url", "")
         target_op = get_bg_opacity()
 
-        # Меняем src ТОЛЬКО если картинка реально изменилась в настройках
         if bg_image.src != bg_val:
-            bg_image.src = bg_val
+            bg_image.src = bg_val or ""
 
         is_vis = bool(bg_val)
         if bg_image.visible != is_vis:
@@ -1292,7 +1291,7 @@ def main(page: ft.Page):
 
     cur_bg_val = get_setting("bg_image_url", "")
     bg_image = ft.Image(
-        src=cur_bg_val,
+        src=cur_bg_val or "",
         fit="cover",
         opacity=get_bg_opacity(),
         top=0,
