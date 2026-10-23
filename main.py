@@ -1,7 +1,7 @@
 import asyncio
 import datetime
-import flet as ft
 
+import flet as ft
 from components import build_collapsible_alert_box, make_badged_icon
 from config import (
     LESSON_TYPE_CONFIG,
@@ -1209,6 +1209,21 @@ def main(page: ft.Page):
                     ft.Text(f"Для группы {view_grp} на {target_wk}-й неделе нет пар или событий.", size=13, color=ft.Colors.GREY_400, italic=True)
                 )
 
+    def sync_background():
+        bg_val = get_setting("bg_image_url", "")
+        target_op = get_bg_opacity()
+
+        # Меняем src ТОЛЬКО если картинка реально изменилась в настройках
+        if bg_image.src != bg_val:
+            bg_image.src = bg_val
+
+        is_vis = bool(bg_val)
+        if bg_image.visible != is_vis:
+            bg_image.visible = is_vis
+
+        if bg_image.opacity != target_op:
+            bg_image.opacity = target_op
+
     def refresh_ui(check_alerts: bool = True):
         if check_alerts or nav_bar.selected_index in (0, 1):
             deadline_alerts, planned_alerts = check_and_trigger_notifications()
@@ -1232,11 +1247,7 @@ def main(page: ft.Page):
 
         nav_bar.bgcolor = get_card_bgcolor()
 
-        bg_url = get_setting("bg_image_url", "")
-        main_container.image = (
-            ft.DecorationImage(src=bg_url, fit="cover", opacity=get_bg_opacity())
-            if bg_url else None
-        )
+        sync_background()
         page.update()
 
     async def pulse_urgent_tiles_loop():
@@ -1279,10 +1290,23 @@ def main(page: ft.Page):
     page.floating_action_button = fab
     page.navigation_bar = nav_bar
 
-    bg_url = get_setting("bg_image_url", "")
-    main_container = ft.Container(
-        expand=True,
-        image=ft.DecorationImage(src=bg_url, fit="cover", opacity=get_bg_opacity()) if bg_url else None,
+    cur_bg_val = get_setting("bg_image_url", "")
+    bg_image = ft.Image(
+        src=cur_bg_val,
+        fit="cover",
+        opacity=get_bg_opacity(),
+        top=0,
+        left=0,
+        right=0,
+        bottom=0,
+        visible=bool(cur_bg_val),
+    )
+
+    fg_container = ft.Container(
+        top=0,
+        left=0,
+        right=0,
+        bottom=0,
         content=ft.SafeArea(
             expand=True,
             content=ft.Container(
@@ -1291,8 +1315,14 @@ def main(page: ft.Page):
             ),
         ),
     )
-    page.add(main_container)
-    
+
+    main_layout = ft.Stack(
+        controls=[bg_image, fg_container],
+        expand=True,
+    )
+    page.add(main_layout)
+
+    sync_background()
     refresh_ui()
     page.run_task(pulse_urgent_tiles_loop)
 

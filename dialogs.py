@@ -11,13 +11,16 @@ from config import (
 )
 from database import (
     NON_LAB_SUBJECTS,
+    add_custom_theme_from_url,
     cleanup_orphan_and_non_lab_subjects,
     compute_subject_lr_analytics,
+    delete_custom_theme,
     delete_saved_group_schedule,
     ensure_base_step_for_lab,
     ensure_group_labs_initialized,
     get_categorized_alerts,
     get_conn,
+    get_custom_themes,
     get_dropdown_subjects_for_schedule,
     get_saved_groups,
     get_setting,
@@ -1618,52 +1621,180 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
     end_ui, get_end_val, _ = create_date_picker_block(page, "Конец семестра", "🎓", cur_end)
     sem_dates_group = ft.Column([start_ui, end_ui], spacing=0, tight=True)
 
-    bg_input = ft.TextField(
-        label="URL фонового изображения",
-        value=get_setting("bg_image_url", ""),
-        hint_text="https://... или оставьте пустым",
+    # --- 3. ОФОРМЛЕНИЕ И ФОН ---
+    cur_bg = get_setting("bg_image_url", "")
+    built_in_options = {
+        "/space.jpg": "🌌 Космос",
+        "/abstract.jpg": "🔮 Абстракция",
+        "/cyberpunk.jpg": "🏙️ Киберпанк",
+        "/forest.jpg": "🌲 Туманный лес",
+        "/mountains.jpg": "🏔️ Ночные горы",
+        "/ocean.jpg": "🌊 Глубокий океан",
+        "/evening.jpg": "☕ Лоу-фай вечер",
+        "/minimal.jpg": "⬛ Минимализм",
+        "": "🚫 Без фона",
+    }
+
+    # Если значение не начинается со слеша и не пустое — это Base64-тема
+    is_custom_active = bool(cur_bg and not cur_bg.startswith("/"))
+    mode_state = {"tab": "custom" if is_custom_active else "builtin"}
+
+    builtin_dd = ft.Dropdown(
+        label="Встроенная тема",
+        value=cur_bg if cur_bg in built_in_options else "",
+        options=[ft.DropdownOption(key=k, text=v) for k, v in built_in_options.items()],
         dense=True,
-        text_size=12,
     )
 
-    theme_chip_containers = {}
-    presets = [
-        ("🌌 Космос", "/space.jpg"),
-        ("🔮 Абстракция", "/abstract.jpg"),
-        ("🚫 Без фона", ""),
-    ]
+    def on_builtin_change(e):
+        set_setting("bg_image_url", builtin_dd.value or "")
+        refresh_ui()
 
-    # Функция мгновенного перемещения синей рамки на нажатую кнопку
-    def update_theme_chips_borders(active_url: str):
-        for u_val, chip_ctrl in theme_chip_containers.items():
-            is_active = (u_val == active_url)
-            chip_ctrl.border = ft.Border.all(1.5 if is_active else 1, "#38BDF8" if is_active else "#334155")
+    builtin_dd.on_select = on_builtin_change
+
+    custom_themes_dd = ft.Dropdown(
+        label="Моя сохранённая тема",
+        expand=True,
+        dense=True,
+    )
+    custom_state = {"themes": []}
+
+    delete_theme_btn = ft.IconButton(
+        icon=ft.Icons.DELETE_OUTLINE_ROUNDED,
+        icon_color="#FCA5A5",
+        tooltip="Удалить выбранную тему",
+        visible=False,
+    )
+
+    def reload_custom_dd():
+        custom_state["themes"] = get_custom_themes()
+        custom_themes_dd.options = [
+            ft.DropdownOption(key=str(t_id), text=t_name) for t_id, t_name, _ in custom_state["themes"]
+        ]
+        cur_active = get_setting("bg_image_url", "")
+        matched_id = None
+        for t_id, _, b64_val in custom_state["themes"]:
+            if b64_val == cur_active:
+                matched_id = str(t_id)
+                break
+        custom_themes_dd.value = matched_id
+        delete_theme_btn.visible = bool(matched_id)
+
+    def on_custom_theme_select(e):
+        sel_id = custom_themes_dd.value
+        if not sel_id:
+            return
+        for t_id, _, b64_val in custom_state["themes"]:
+            if str(t_id) == sel_id:
+                set_setting("bg_image_url", b64_val)
+                refresh_ui()
+                break
+        delete_theme_btn.visible = True
         page.update()
 
-    def set_preset_bg(url_val: str):
-        bg_input.value = url_val
-        update_theme_chips_borders(url_val)
+    custom_themes_dd.on_select = on_custom_theme_select
 
-    theme_chips = ft.Row(spacing=6)
-    for label, u_val in presets:
-        is_init_active = (bg_input.value.strip() == u_val)
-        chip = ft.Container(
-            expand=1,
-            height=34,
-            bgcolor="#1E293B",
-            border_radius=8,
-            border=ft.Border.all(1.5 if is_init_active else 1, "#38BDF8" if is_init_active else "#334155"),
-            alignment=ft.Alignment.CENTER,
-            content=ft.Text(label, size=11, color="white", no_wrap=True),
-            on_click=lambda e, u=u_val: set_preset_bg(u),
+    def on_delete_custom_theme(e):
+        sel_id = custom_themes_dd.value
+        if not sel_id:
+            return
+        delete_custom_theme(int(sel_id))
+        set_setting("bg_image_url", "")
+        reload_custom_dd()
+        refresh_ui()
+        show_toast("Тема удалена", is_urgent=False)
+        page.update()
+
+    delete_theme_btn.on_click = on_delete_custom_theme
+
+    def open_add_theme_dialog(e):
+        name_in = ft.TextField(
+            label="Название темы",
+            capitalization=ft.TextCapitalization.SENTENCES,
+            dense=True,
+            autofocus=True,
         )
-        theme_chip_containers[u_val] = chip
-        theme_chips.controls.append(chip)
+        url_in = ft.TextField(label="Прямая ссылка на фото (URL)", hint_text="https://...", dense=True)
+        err_lbl = ft.Text("", size=11, color="#EF4444", visible=False)
+        prog_bar = ft.ProgressBar(visible=False)
 
-    # Если пользователь вставит ссылку вручную — кнопки снимут выделение
-    bg_input.on_change = lambda e: update_theme_chips_borders(bg_input.value.strip())
+        def do_download(ev):
+            err_lbl.visible = False
+            prog_bar.visible = True
+            page.update()
 
-    
+            raw_name = name_in.value.strip()
+            theme_title = (raw_name[0].upper() + raw_name[1:]) if raw_name else ""
+
+            ok, res_b64 = add_custom_theme_from_url(theme_title, url_in.value)
+            prog_bar.visible = False
+            if not ok:
+                err_lbl.value = f"⚠️ {res_b64}"
+                err_lbl.visible = True
+                page.update()
+                return
+
+            set_setting("bg_image_url", res_b64)
+            reload_custom_dd()
+            refresh_ui()
+            page.pop_dialog()
+            show_toast("Тема сохранена и установлена!", is_urgent=False)
+
+        add_dlg = ft.AlertDialog(
+            title=make_dialog_header(page, "➕ Новая тема"),
+            content=ft.Column([name_in, url_in, prog_bar, err_lbl], tight=True, spacing=8),
+            actions=[ft.FilledButton("Скачать и сохранить", on_click=do_download)],
+        )
+        page.show_dialog(add_dlg)
+
+    add_theme_btn = ft.FilledButton("➕ Добавить тему", on_click=open_add_theme_dialog)
+    reload_custom_dd()
+
+    theme_tabs_row = ft.Row(spacing=6)
+    builtin_box = ft.Container(content=builtin_dd, visible=not is_custom_active)
+    custom_box = ft.Column(
+        controls=[
+            ft.Row([custom_themes_dd, delete_theme_btn], spacing=4),
+            add_theme_btn,
+        ],
+        spacing=6,
+        visible=is_custom_active,
+    )
+
+    def switch_theme_tab(tab_name: str):
+        mode_state["tab"] = tab_name
+        builtin_box.visible = (tab_name == "builtin")
+        custom_box.visible = (tab_name == "custom")
+        render_theme_tab_btns()
+        page.update()
+
+    def render_theme_tab_btns():
+        is_b = (mode_state["tab"] == "builtin")
+        theme_tabs_row.controls = [
+            ft.Container(
+                expand=1,
+                bgcolor="#2563EB" if is_b else "#1E293B",
+                padding=ft.Padding.symmetric(vertical=7),
+                border_radius=8,
+                border=ft.Border.all(1.5 if is_b else 1, "#38BDF8" if is_b else "#334155"),
+                alignment=ft.Alignment.CENTER,
+                content=ft.Text("📦 Встроенные", size=12, weight=ft.FontWeight.BOLD if is_b else ft.FontWeight.NORMAL, color="white"),
+                on_click=lambda e: switch_theme_tab("builtin"),
+            ),
+            ft.Container(
+                expand=1,
+                bgcolor="#2563EB" if not is_b else "#1E293B",
+                padding=ft.Padding.symmetric(vertical=7),
+                border_radius=8,
+                border=ft.Border.all(1.5 if not is_b else 1, "#38BDF8" if not is_b else "#334155"),
+                alignment=ft.Alignment.CENTER,
+                content=ft.Text("📁 Мои темы", size=12, weight=ft.FontWeight.BOLD if not is_b else ft.FontWeight.NORMAL, color="white"),
+                on_click=lambda e: switch_theme_tab("custom"),
+            ),
+        ]
+
+    render_theme_tab_btns()
+
     cur_bg_op = int(get_setting("bg_opacity", "25"))
     cur_card_op = int(get_setting("card_opacity", "75"))
 
@@ -1833,9 +1964,8 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
         if get_end_val():
             set_setting("semester_end", get_end_val())
         set_setting("view_group", state["view_grp"] or "")
-        set_setting("bg_image_url", bg_input.value.strip())
-        set_setting("bg_opacity", str(int(bg_op_slider.value))) 
-        set_setting("card_opacity", str(int(card_op_slider.value)))  
+        set_setting("bg_opacity", str(int(bg_op_slider.value)))
+        set_setting("card_opacity", str(int(card_op_slider.value)))
         page.pop_dialog()
         refresh_ui()
 
@@ -1860,8 +1990,9 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
             sem_dates_group,
             ft.Divider(height=6),
             ft.Text("3. Оформление и фон:", weight=ft.FontWeight.BOLD, size=13, color="#38BDF8"),
-            theme_chips,
-            bg_input,
+            theme_tabs_row,
+            builtin_box,
+            custom_box,
             ft.Container(height=4),
             bg_op_label,
             bg_op_slider,

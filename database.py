@@ -1,5 +1,7 @@
+import base64
 import datetime
 import hashlib
+import io
 import json
 import sqlite3
 import urllib.error
@@ -14,6 +16,7 @@ from config import (
     get_academic_week_number,
     parse_date_safe,
 )
+from PIL import Image
 
 NON_LAB_SUBJECTS = {
     "физк",
@@ -161,6 +164,36 @@ def init_db():
             value TEXT NOT NULL
         )
     """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS custom_themes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            b64_data TEXT NOT NULL,
+            created_at TEXT DEFAULT ''
+        )
+    """)
+    # Если осталась старая колонка file_path — пересоздаём таблицу
+    cur.execute("PRAGMA table_info(custom_themes)")
+    cols = [col[1] for col in cur.fetchall()]
+    if "file_path" in cols and "b64_data" not in cols:
+        cur.execute("DROP TABLE custom_themes")
+        cur.execute("""
+            CREATE TABLE custom_themes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                b64_data TEXT NOT NULL,
+                created_at TEXT DEFAULT ''
+            )
+        """)
+
+    # Сбрасываем старые битые пути к файлам на тему по умолчанию
+    cur.execute("SELECT value FROM app_settings WHERE key = 'bg_image_url'")
+    row = cur.fetchone()
+    if row and row[0]:
+        val = row[0]
+        if val.startswith(("/data", "data:image")):
+            cur.execute("UPDATE app_settings SET value = '/space.jpg' WHERE key = 'bg_image_url'")
 
     default_settings = {
         "semester_start": "2026-09-01",
@@ -718,3 +751,62 @@ def compute_subject_lr_analytics() -> dict:
         }
 
     return analytics
+
+
+def get_custom_themes() -> list:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, b64_data FROM custom_themes ORDER BY id DESC")
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def add_custom_theme_from_url(name: str, url: str) -> tuple[bool, str]:
+    clean_name = name.strip()
+    if clean_name:
+        clean_name = clean_name[0].upper() + clean_name[1:]
+    clean_url = url.strip()
+    if not clean_name:
+        return False, "Введите название темы!"
+    if not clean_url.startswith(("http://", "https://")):
+        return False, "Ссылка должна начинаться с http:// или https://"
+
+    try:
+        req = urllib.request.Request(clean_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            raw_bytes = resp.read()
+
+        # Сжимаем фото до разрешения смартфона (макс. 800px) для мгновенной отрисовки
+        img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+        max_dim = 800
+        if max(img.width, img.height) > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=75, optimize=True)
+        compressed_bytes = buf.getvalue()
+
+        # Обязательно добавляем префикс data:image/jpeg;base64,
+        b64_str = base64.b64encode(compressed_bytes).decode("utf-8")
+        data_uri = f"data:image/jpeg;base64,{b64_str}"
+    except Exception as ex:
+        return False, f"Ошибка скачивания: {ex}"
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO custom_themes (name, b64_data, created_at) VALUES (?, ?, ?)",
+        (clean_name, data_uri, datetime.date.today().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return True, data_uri
+
+
+def delete_custom_theme(theme_id: int):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM custom_themes WHERE id = ?", (theme_id,))
+    conn.commit()
+    conn.close()
