@@ -11,22 +11,22 @@ from config import (
 )
 from database import (
     NON_LAB_SUBJECTS,
+    add_custom_theme,
     cleanup_orphan_and_non_lab_subjects,
     compute_subject_lr_analytics,
+    delete_custom_theme,
     delete_saved_group_schedule,
     ensure_base_step_for_lab,
     ensure_group_labs_initialized,
     get_categorized_alerts,
     get_conn,
+    get_custom_themes,
     get_dropdown_subjects_for_schedule,
     get_saved_groups,
     get_setting,
     import_schedule_from_bsuir_api,
     renumber_subject_labs,
     set_setting,
-    add_custom_theme,
-    delete_custom_theme,
-    get_custom_themes,
 )
 
 CUSTOM_SUBJ_KEY = "__custom_new_subject__"
