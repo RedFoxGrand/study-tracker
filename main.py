@@ -19,6 +19,7 @@ from database import (
     add_lab_to_subject_db,
     check_and_sync_all_saved_groups,
     compute_subject_lr_analytics,
+    cycle_lab_status,
     get_categorized_alerts,
     get_conn,
     get_saved_groups,
@@ -38,10 +39,11 @@ from dialogs import (
     open_onboarding_dialog,
     open_schedule_item_dialog,
     open_schedule_settings_dialog,
+    open_search_dialog,
 )
 
-BG_OPACITY = 0.45  # Чем выше число (от 0.0 до 1.0), тем ярче и отчетливее картинка
-card_bg = "#B31E293B"  # 70% плотности плиток (фон будет красиво просвечивать)
+BG_OPACITY = 0.45 
+card_bg = "#B31E293B" 
 
 def main(page: ft.Page):
     def get_card_bgcolor() -> str:
@@ -53,7 +55,6 @@ def main(page: ft.Page):
     def get_inner_bgcolor() -> str:
         """Цвет внутренних блоков (пары, чипы, кнопки), гармонирующий с фоном."""
         op = max(0, min(100, int(get_setting("card_opacity", "75"))))
-        # Делаем внутренние блоки чуть глубже (коэффициент 0.75 от общей плотности)
         alpha = int(255 * (op / 100) * 0.75)
         return f"#{alpha:02X}1E293B"
 
@@ -77,12 +78,6 @@ def main(page: ft.Page):
         )
     )
 
-    if not hasattr(page, "clipboard"):
-        try:
-            setattr(page, "clipboard", None)
-        except Exception:
-            pass
-
     init_db()
 
     list_filter_state = {"mode": "unsubmitted"}
@@ -91,23 +86,25 @@ def main(page: ft.Page):
     urgent_tiles_refs = []
     notified_alert_keys = set()
 
-    toast_icon = ft.Icon(ft.Icons.NOTIFICATIONS_ACTIVE_ROUNDED, color="#FDE047", size=20)
-    toast_text = ft.Text("", size=12, weight=ft.FontWeight.W_600, color="white", expand=True)
+    toast_icon = ft.Icon(ft.Icons.NOTIFICATIONS_ACTIVE_ROUNDED, color="#FDE047", size=18)
+    toast_text = ft.Text("", size=11.5, weight=ft.FontWeight.W_600, color="white", expand=True)
     toast_banner = ft.Container(
         visible=False,
         bgcolor="#DC2626",
-        margin=ft.Margin.only(right=6),
-        padding=ft.Padding.symmetric(horizontal=10, vertical=8),
-        border_radius=10,
+        margin=ft.Margin.only(right=4),
+        padding=ft.Padding.symmetric(horizontal=8, vertical=6),
+        border_radius=8,
         border=ft.Border.all(1, "#FCA5A5"),
-        shadow=ft.BoxShadow(spread_radius=1, blur_radius=10, color="#7F1D1D"),
+        shadow=ft.BoxShadow(spread_radius=1, blur_radius=8, color="#7F1D1D"),
         content=ft.Row(
             controls=[
                 toast_icon,
                 toast_text,
                 ft.IconButton(
                     icon=ft.Icons.CLOSE_ROUNDED,
-                    icon_size=18,
+                    icon_size=16,
+                    visual_density=ft.VisualDensity.COMPACT,
+                    padding=0,
                     icon_color="white",
                     on_click=lambda e: hide_toast(),
                 ),
@@ -185,7 +182,6 @@ def main(page: ft.Page):
 
         return deadline_alerts, planned_alerts
 
-    # --- ВКЛАДКА 1: СВОДКА И ТАБЛИЦА ЛАБ ---
     def render_subjects_tab(deadline_alerts, planned_alerts):
         urgent_tiles_refs.clear()
         card_bg = get_card_bgcolor()
@@ -224,19 +220,7 @@ def main(page: ft.Page):
         counts = get_summary_counts()
         total = sum(counts.values())
         done_ratio = counts[3] / total if total > 0 else 0
-        total_alerts = len(deadline_alerts) + len(planned_alerts)
         lr_analytics = compute_subject_lr_analytics()
-
-        bell_color = "#FDE047" if deadline_alerts else ("#38BDF8" if planned_alerts else ft.Colors.GREY_400)
-
-        bell_widget = ft.IconButton(
-            icon=ft.Icons.NOTIFICATIONS_OUTLINED if total_alerts == 0 else ft.Icons.NOTIFICATIONS_ACTIVE_ROUNDED,
-            icon_color=bell_color,
-            icon_size=22,
-            visual_density=ft.VisualDensity.COMPACT,
-            tooltip=f"Уведомления ({total_alerts})",
-            on_click=lambda e: open_notifications_dialog(page, refresh_ui),
-        )
 
         summary_card = ft.Card(
             bgcolor=card_bg,
@@ -249,17 +233,10 @@ def main(page: ft.Page):
                     controls=[
                         ft.Row(
                             controls=[
-                                ft.Row(
-                                    controls=[
-                                        ft.Text("📊 Прогресс семестра:", weight=ft.FontWeight.BOLD, size=16, color="#FFFFFF"),
-                                        ft.Text(f"{counts[3]}/{total}", weight=ft.FontWeight.BOLD, size=16, color="#4ADE80"),
-                                    ],
-                                    spacing=6,
-                                ),
-                                bell_widget,
+                                ft.Text("📊 Прогресс семестра:", weight=ft.FontWeight.BOLD, size=16, color="#FFFFFF"),
+                                ft.Text(f"{counts[3]}/{total}", weight=ft.FontWeight.BOLD, size=16, color="#4ADE80"),
                             ],
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            spacing=6,
                         ),
                         ft.Row(
                             controls=[
@@ -357,7 +334,8 @@ def main(page: ft.Page):
                     alignment=ft.Alignment.CENTER,
                     border=tile_border,
                     shadow=tile_shadow,
-                    animate=ft.Animation(500, ft.AnimationCurve.EASE_IN_OUT),
+                    ink=True,
+                    animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
                     content=ft.Column(
                         controls=[
                             ft.Text(str(l_num), color=cfg["text_color"], weight=ft.FontWeight.BOLD, size=16),
@@ -383,10 +361,19 @@ def main(page: ft.Page):
                     else inner_box
                 )
 
+                def handle_quick_tap(e, lid=l_id):
+                    cycle_lab_status(lid)
+                    refresh_ui()
+
+                def handle_long_press(e, lid=l_id, sid=s_id, sn=s_name):
+                    open_lab_editor(page, refresh_ui, lid, sid, sn)
+
                 lab_tiles.append(
                     ft.GestureDetector(
-                        content=ft.Container(content=tile_widget, tooltip="\n".join(tooltip_lines)),
-                        on_tap=lambda e, lid=l_id, sid=s_id, sn=s_name: open_lab_editor(page, refresh_ui, lid, sid, sn),
+                        content=ft.Container(content=tile_widget),
+                        on_tap=handle_quick_tap,
+                        on_long_press_start=handle_long_press,
+                        on_secondary_tap=handle_long_press,
                     )
                 )
 
@@ -470,7 +457,6 @@ def main(page: ft.Page):
                 )
             )
 
-    # --- ВКЛАДКА 2: ДЕДЛАЙНЫ И ОЧЕРЕДЬ СДАЧИ ---
     def render_deadlines_tab(deadline_alerts, planned_alerts):
         urgent_tiles_refs.clear()
         card_bg = get_card_bgcolor()
@@ -627,6 +613,35 @@ def main(page: ft.Page):
 
         content_area.controls.append(ft.Text(header_title, size=16, weight=ft.FontWeight.BOLD))
 
+        if not labs_list:
+            if cur_mode == "unsubmitted":
+                empty_msg = "🎉 Все лабораторные работы успешно сданы! Отличная работа!"
+                empty_icon = ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED
+                empty_color = "#4ADE80"
+            elif cur_mode == "submitted":
+                empty_msg = "Пока нет сданных лабораторных работ."
+                empty_icon = ft.Icons.ASSIGNMENT_LATE_OUTLINED
+                empty_color = ft.Colors.GREY_400
+            else:
+                empty_msg = "Список лабораторных работ пуст."
+                empty_icon = ft.Icons.FOLDER_OPEN_OUTLINED
+                empty_color = ft.Colors.GREY_400
+
+            content_area.controls.append(
+                ft.Container(
+                    padding=30,
+                    alignment=ft.Alignment.CENTER,
+                    content=ft.Column(
+                        controls=[
+                            ft.Icon(empty_icon, size=48, color=empty_color),
+                            ft.Text(empty_msg, size=14, color=empty_color, weight=ft.FontWeight.W_600, text_align=ft.TextAlign.CENTER),
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=10,
+                    ),
+                )
+            )
+
         for l_id, s_id, s_name, l_num, st, dl, pl_dt, comp_dt, title, goal, desc, comm, done_steps, total_steps in labs_list:
             cfg = STATUS_CONFIG[st]
             d_dl = days_until(dl) if st < 3 else None
@@ -699,7 +714,6 @@ def main(page: ft.Page):
                 )
             )
 
-    # --- ВКЛАДКА 3: ПРОСМОТР РАСПИСАНИЯ ---
     def render_schedule_tab():
         urgent_tiles_refs.clear()
         card_bg = get_card_bgcolor()
@@ -790,24 +804,12 @@ def main(page: ft.Page):
                 border=ft.Border.all(1, "#334155"),
                 content=ft.Column(
                     controls=[
-                        ft.Row(
+                        ft.Column(
                             controls=[
-                                ft.Column(
-                                    controls=[
-                                        ft.Text(f"🎓 Идёт {cur_week_num}-я учебная неделя", weight=ft.FontWeight.BOLD, size=15, color="#38BDF8"),
-                                        ft.Text(f"Сегодня: {WEEKDAYS_FULL[today.weekday()]}, {format_date_ru(today.isoformat())}", size=11, color=ft.Colors.GREY_300),
-                                    ],
-                                    spacing=2,
-                                    expand=True,
-                                ),
-                                ft.IconButton(
-                                    icon=ft.Icons.SETTINGS_OUTLINED,
-                                    icon_color=ft.Colors.GREY_300,
-                                    tooltip="Управление группами и настройками",
-                                    on_click=lambda e: open_schedule_settings_dialog(page, refresh_ui, show_in_app_toast),
-                                ),
+                                ft.Text(f"🎓 Идёт {cur_week_num}-я учебная неделя", weight=ft.FontWeight.BOLD, size=15, color="#38BDF8"),
+                                ft.Text(f"Сегодня: {WEEKDAYS_FULL[today.weekday()]}, {format_date_ru(today.isoformat())}", size=11, color=ft.Colors.GREY_300),
                             ],
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            spacing=2,
                         ),
                         ft.Row(group_switch_chips, wrap=True, spacing=6, run_spacing=6),
                         ft.Divider(height=4, color="#334155"),
@@ -1076,7 +1078,10 @@ def main(page: ft.Page):
             for offset in range(limit_days):
                 dt_target = today + datetime.timedelta(days=offset)
                 if dt_target.weekday() == 6:
-                    continue
+                    iso_t = dt_target.isoformat()
+                    has_sunday_items = any(r[5] == iso_t for r, _ in prepared_slots) or any(ev[3] == iso_t for ev, _ in prepared_events)
+                    if not has_sunday_items:
+                        continue
                 wk_str = str(get_academic_week_number(dt_target, sem_start))
                 dow_t = dt_target.weekday()
                 iso_t = dt_target.isoformat()
@@ -1153,7 +1158,7 @@ def main(page: ft.Page):
         else:
             target_wk = cur_view
             has_any_in_week = False
-            for dow_idx in range(6):
+            for dow_idx in range(7):
                 day_lessons = []
                 for r, wks in prepared_slots:
                     if r[3] != dow_idx:
@@ -1262,10 +1267,10 @@ def main(page: ft.Page):
                     else:
                         tile.border = ft.Border.all(2, "#FFFFFF")
                         tile.shadow = ft.BoxShadow(spread_radius=0, blur_radius=3, color="#EF4444")
-                try:
-                    page.update()
-                except Exception:
-                    break
+                    try:
+                        tile.update()
+                    except Exception:
+                        pass
 
     def on_fab_click(e):
         if nav_bar.selected_index == 2:
@@ -1301,6 +1306,61 @@ def main(page: ft.Page):
         visible=bool(cur_bg_val),
     )
 
+    def build_app_header():
+            total_alerts = len(get_categorized_alerts()[0]) + len(get_categorized_alerts()[1])
+            bell_color = "#FDE047" if get_categorized_alerts()[0] else ("#38BDF8" if total_alerts > 0 else ft.Colors.GREY_400)
+    
+            return ft.Container(
+                padding=ft.Padding.only(left=8, right=4, top=4, bottom=4),
+                content=ft.Row(
+                    controls=[
+                        ft.Row(
+                            controls=[
+                                ft.Container(
+                                    width=36,
+                                    height=36,
+                                    border_radius=18,
+                                    bgcolor="#2563EB",
+                                    alignment=ft.Alignment.CENTER,
+                                    content=ft.Icon(ft.Icons.SCHOOL_ROUNDED, size=20, color="white"),
+                                ),
+                                ft.Text("Трекер лаб", size=20, weight=ft.FontWeight.BOLD, color="white"),
+                            ],
+                            spacing=10,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        ft.Row(
+                            controls=[
+                                ft.IconButton(
+                                    icon=ft.Icons.SEARCH_ROUNDED,
+                                    icon_color=ft.Colors.GREY_300,
+                                    icon_size=24,
+                                    tooltip="Поиск",
+                                    on_click=lambda e: open_search_dialog(page, refresh_ui, show_in_app_toast),
+                                ),
+                                ft.IconButton(
+                                    icon=ft.Icons.NOTIFICATIONS_OUTLINED if total_alerts == 0 else ft.Icons.NOTIFICATIONS_ACTIVE_ROUNDED,
+                                    icon_color=bell_color,
+                                    icon_size=24,
+                                    tooltip=f"Уведомления ({total_alerts})",
+                                    on_click=lambda e: open_notifications_dialog(page, refresh_ui),
+                                ),
+                                ft.IconButton(
+                                    icon=ft.Icons.SETTINGS_OUTLINED,
+                                    icon_color=ft.Colors.GREY_300,
+                                    icon_size=24,
+                                    tooltip="Настройки",
+                                    on_click=lambda e: open_schedule_settings_dialog(page, refresh_ui, show_in_app_toast),
+                                ),
+                            ],
+                            spacing=2,
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            )
+    
     fg_container = ft.Container(
         top=0,
         left=0,
@@ -1309,8 +1369,16 @@ def main(page: ft.Page):
         content=ft.SafeArea(
             expand=True,
             content=ft.Container(
-                padding=ft.Padding.only(top=10, left=10, right=4, bottom=4),
-                content=ft.Column(controls=[toast_banner, content_wrapper], expand=True, spacing=8),
+                padding=ft.Padding.only(top=6, left=8, right=4, bottom=4),
+                content=ft.Column(
+                    controls=[
+                        build_app_header(),
+                        toast_banner,
+                        content_wrapper,
+                    ],
+                    expand=True,
+                    spacing=6,
+                ),
             ),
         ),
     )

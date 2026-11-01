@@ -5,6 +5,8 @@ from components import create_date_picker_block
 from config import (
     BASE_DEFENSE_TITLE,
     BELL_PRESETS,
+    LESSON_TYPE_CONFIG,
+    STATUS_CONFIG,
     WEEKDAYS_FULL,
     format_date_ru,
     format_short_date_ru,
@@ -18,14 +20,19 @@ from database import (
     delete_saved_group_schedule,
     ensure_base_step_for_lab,
     ensure_group_labs_initialized,
+    export_db_to_downloads,
+    export_db_to_json,
     get_categorized_alerts,
     get_conn,
     get_custom_themes,
     get_dropdown_subjects_for_schedule,
     get_saved_groups,
     get_setting,
+    import_db_from_downloads,
+    import_db_from_json,
     import_schedule_from_bsuir_api,
     renumber_subject_labs,
+    search_all_data,
     set_setting,
 )
 
@@ -251,9 +258,8 @@ def open_lab_editor(page: ft.Page, refresh_ui, lab_id: int, subj_id: int, subj_n
     sync_date_blocks_visibility()
 
     steps_column = ft.Column(spacing=4)
-    reorder_mode = [False]  # Флаг режима сортировки
+    reorder_mode = [False]
 
-    # Автоматическое превращение первой буквы в заглавную при вводе
     def auto_cap(e):
         val = e.control.value or ""
         if len(val) == 1 and val[0].islower():
@@ -318,7 +324,6 @@ def open_lab_editor(page: ft.Page, refresh_ui, lab_id: int, subj_id: int, subj_n
         steps_column.controls.clear()
         reorder_btn.visible = len(steps_data) > 2
 
-        # --- РЕЖИМ 1: СОРТИРОВКА (Стрелки плотно рядом) ---
         if reorder_mode[0]:
             steps_column.controls.append(
                 ft.Container(
@@ -387,7 +392,6 @@ def open_lab_editor(page: ft.Page, refresh_ui, lab_id: int, subj_id: int, subj_n
                 )
             return
 
-        # --- РЕЖИМ 2: ОБЫЧНЫЙ (Замочек и крестики идеально симметричны) ---
         for idx, step in enumerate(steps_data):
             is_locked = step.get("locked", False)
 
@@ -657,7 +661,7 @@ def open_add_subject_dialog(page: ft.Page, refresh_ui):
         autofocus=True,
         dense=True,
     )
-    count_field = ft.TextField(label="Количество лаб", value="5", keyboard_type=ft.KeyboardType.NUMBER, dense=True)
+    count_field = ft.TextField(label="Количество лаб", value="4", keyboard_type=ft.KeyboardType.NUMBER, dense=True)
     error_banner = ft.Text("", color="#EF4444", size=13, weight=ft.FontWeight.W_600, visible=False)
 
     def create_subject(ev):
@@ -848,15 +852,19 @@ def open_schedule_item_dialog(page: ft.Page, refresh_ui, show_toast, sched_id=No
     init_room = ""
     init_teacher = ""
     init_note = ""
+    init_orig_slot = ""
+    init_orig_subj_name = ""
 
     if sched_id is not None:
         conn = get_conn()
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT subject_id, day_of_week, weeks, lesson_date, subgroup, lesson_type,
-                   start_time, end_time, room, teacher, note
-            FROM schedule WHERE id = ?
+            SELECT sc.subject_id, sc.day_of_week, sc.weeks, sc.lesson_date, sc.subgroup, sc.lesson_type,
+                   sc.start_time, sc.end_time, sc.room, sc.teacher, sc.note, s.name, sc.orig_slot
+            FROM schedule sc
+            JOIN subjects s ON s.id = sc.subject_id
+            WHERE sc.id = ?
             """,
             (sched_id,),
         )
@@ -874,6 +882,8 @@ def open_schedule_item_dialog(page: ft.Page, refresh_ui, show_toast, sched_id=No
             init_room = row[8] or ""
             init_teacher = row[9] or ""
             init_note = row[10] or ""
+            init_orig_subj_name = row[11] or ""
+            init_orig_slot = row[12] or ""
 
     subjects_list = get_dropdown_subjects_for_schedule(view_grp, include_subj_id=init_subj_id)
 
@@ -1139,12 +1149,14 @@ def open_schedule_item_dialog(page: ft.Page, refresh_ui, show_toast, sched_id=No
                 ),
             )
         else:
+            fallback_key = f"{init_orig_subj_name.strip().casefold()}_{init_dow}_{init_start}_{init_subg}_{init_type}"
             cur.execute(
                 """
                 UPDATE schedule
                 SET subject_id = ?, day_of_week = ?, weeks = ?, lesson_date = ?, subgroup = ?,
                     lesson_type = ?, start_time = ?, end_time = ?, room = ?, teacher = ?, note = ?,
-                    is_api_synced = 0
+                    is_api_synced = 0,
+                    orig_slot = CASE WHEN (orig_slot IS NOT NULL AND orig_slot != '') THEN orig_slot ELSE ? END
                 WHERE id = ?
                 """,
                 (
@@ -1159,6 +1171,7 @@ def open_schedule_item_dialog(page: ft.Page, refresh_ui, show_toast, sched_id=No
                     room_input.value.strip(),
                     teacher_input.value.strip(),
                     note_input.value.strip(),
+                    fallback_key,
                     sched_id,
                 ),
             )
@@ -1621,7 +1634,6 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
     end_ui, get_end_val, _ = create_date_picker_block(page, "Конец семестра", "🎓", cur_end)
     sem_dates_group = ft.Column([start_ui, end_ui], spacing=0, tight=True)
 
-    # --- 3. ОФОРМЛЕНИЕ И ФОН ---
     cur_bg = get_setting("bg_image_url", "")
     built_in_options = {
         "/space.jpg": "🌌 Космос",
@@ -1630,15 +1642,14 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
         "/forest.jpg": "🌲 Туманный лес",
         "/mountains.jpg": "🏔️ Ночные горы",
         "/ocean.jpg": "🌊 Глубокий океан",
-        "/lofi.jpg": "☕ Лоу-фай вечер",
-        "/minimal.jpg": "⬛ Тёмный минимализм",
+        "/evening.jpg": "☕ Вечер",
+        "/minimal.jpg": "⬛ Минимализм",
         "": "🚫 Без фона",
     }
 
     is_custom_active = cur_bg.startswith(("http://", "https://"))
     mode_state = {"tab": "custom" if is_custom_active else "builtin"}
 
-    # Выпадающий список встроенных тем
     builtin_dd = ft.Dropdown(
         label="Встроенная тема",
         value=cur_bg if cur_bg in built_in_options else "",
@@ -1652,7 +1663,6 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
 
     builtin_dd.on_select = on_builtin_change
 
-    # Элементы пользовательских тем
     custom_themes_dd = ft.Dropdown(
         label="Моя сохранённая тема",
         expand=True,
@@ -1743,9 +1753,12 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
     add_theme_btn = ft.FilledButton("➕ Добавить тему", on_click=open_add_theme_dialog)
     reload_custom_dd()
 
-    # Переключатель вкладок
     theme_tabs_row = ft.Row(spacing=6)
-    builtin_box = ft.Container(content=builtin_dd, visible=not is_custom_active)
+    builtin_box = ft.Container(
+        content=builtin_dd,
+        visible=not is_custom_active,
+        margin=ft.Margin.only(top=8),
+    )
     custom_box = ft.Column(
         controls=[
             ft.Row([custom_themes_dd, delete_theme_btn], spacing=4),
@@ -1753,6 +1766,7 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
         ],
         spacing=6,
         visible=is_custom_active,
+        margin=ft.Margin.only(top=8),
     )
 
     def switch_theme_tab(tab_name: str):
@@ -1808,6 +1822,18 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
         divisions=20,
         value=cur_card_op,
         on_change=lambda e: (setattr(card_op_label, "value", f"Плотность карточек: {int(e.control.value)}%"), page.update()),
+    )
+
+    sliders_group = ft.Column(
+        controls=[
+            bg_op_label,
+            bg_op_slider,
+            ft.Container(height=4),
+            card_op_label,
+            card_op_slider,
+        ],
+        spacing=0,
+        tight=True,
     )
 
     new_group_input = ft.TextField(
@@ -1963,6 +1989,105 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
         page.pop_dialog()
         refresh_ui()
 
+    backup_status = ft.Text("", size=11, color="#4ADE80", visible=False)
+
+    def do_export_file(e):
+        ok, msg = export_db_to_downloads()
+        backup_status.value = ("✅ " if ok else "⚠️ ") + msg
+        backup_status.color = "#4ADE80" if ok else "#FCA5A5"
+        backup_status.visible = True
+        page.update()
+
+    def do_export_clipboard(e):
+        js_data = export_db_to_json()
+        
+        copy_field = ft.TextField(
+            label="Текст бэкапа",
+            value=js_data,
+            multiline=True,
+            min_lines=4,
+            max_lines=8,
+            read_only=True,
+            text_size=11,
+            autofocus=True,
+        )
+
+        dlg_copy = ft.AlertDialog(
+            title=make_dialog_header(page, "📋 Текстовый бэкап"),
+            content=ft.Column(
+                controls=[
+                    ft.Text("Зажмите текст ниже, нажмите «Выделить всё» и «Копировать»:", size=12, color=ft.Colors.GREY_300),
+                    copy_field,
+                ],
+                tight=True,
+                spacing=8,
+            ),
+            actions=[ft.FilledButton("Готово", on_click=lambda ev: page.pop_dialog())],
+        )
+        page.show_dialog(dlg_copy)
+
+    def open_import_dialog(e):
+        import_in = ft.TextField(
+            label="Вставьте код бэкапа",
+            multiline=True,
+            min_lines=3,
+            max_lines=6,
+            dense=True,
+            text_size=11,
+        )
+        import_err = ft.Text("", size=11, color="#EF4444", visible=False)
+
+        def apply_import(ev):
+            if not import_in.value.strip():
+                import_err.value = "⚠️ Вставьте строку бэкапа!"
+                import_err.visible = True
+                page.update()
+                return
+            ok, msg = import_db_from_json(import_in.value)
+            if not ok:
+                import_err.value = f"⚠️ {msg}"
+                import_err.visible = True
+                page.update()
+                return
+            page.pop_dialog()
+            page.pop_dialog()
+            refresh_ui()
+            show_toast("🎉 База успешно восстановлена из буфера!", is_urgent=False)
+
+        dlg_imp = ft.AlertDialog(
+            title=make_dialog_header(page, "📥 Восстановление данных"),
+            content=ft.Column([import_in, import_err], tight=True, spacing=6),
+            actions=[ft.FilledButton("Восстановить", on_click=apply_import)],
+        )
+        page.show_dialog(dlg_imp)
+
+    def do_import_file(e):
+        ok, msg = import_db_from_downloads()
+        backup_status.value = ("✅ " if ok else "⚠️ ") + msg
+        backup_status.color = "#4ADE80" if ok else "#FCA5A5"
+        backup_status.visible = True
+        if ok:
+            refresh_ui()
+            show_toast("🎉 База успешно восстановлена из файла!", is_urgent=False)
+        page.update()
+
+    backup_block = ft.Column(
+        controls=[
+            ft.Text("Экспорт:", size=11, color=ft.Colors.GREY_400),
+            ft.Row([
+                ft.OutlinedButton("В Загрузки", icon=ft.Icons.DOWNLOAD_ROUNDED, expand=True, on_click=do_export_file),
+                ft.OutlinedButton("В буфер", icon=ft.Icons.COPY_ALL_ROUNDED, expand=True, on_click=do_export_clipboard),
+            ], spacing=6),
+            ft.Text("Восстановление:", size=11, color=ft.Colors.GREY_400),
+            ft.Row([
+                ft.FilledButton("Из Загрузок", icon=ft.Icons.FILE_OPEN_ROUNDED, expand=True, on_click=do_import_file),
+                ft.FilledButton("Из буфера", icon=ft.Icons.RESTORE_ROUNDED, expand=True, on_click=open_import_dialog),
+            ], spacing=6),
+            backup_status,
+        ],
+        spacing=6,
+    )
+
     dlg = ft.AlertDialog(
         inset_padding=ft.Padding.symmetric(horizontal=12, vertical=14),
         title_padding=ft.Padding.only(left=14, right=8, top=10, bottom=0),
@@ -1987,11 +2112,11 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
             theme_tabs_row,
             builtin_box,
             custom_box,
-            ft.Container(height=4),
-            bg_op_label,
-            bg_op_slider,
-            card_op_label,
-            card_op_slider,
+            ft.Container(height=2),
+            sliders_group,
+            ft.Divider(height=6),
+            ft.Text("4. Резервное копирование базы:", weight=ft.FontWeight.BOLD, size=13, color="#38BDF8"),
+            backup_block,
         ], scrollable=True),
         actions=[ft.FilledButton("Сохранить", on_click=save_settings)],
         actions_alignment=ft.MainAxisAlignment.END,
@@ -2141,3 +2266,215 @@ def open_onboarding_dialog(page: ft.Page, refresh_ui, show_toast):
         actions_alignment=ft.MainAxisAlignment.END,
     )
     page.show_dialog(dlg)
+
+def open_search_dialog(page: ft.Page, refresh_ui, show_toast):
+    search_input = ft.TextField(
+        hint_text="Предмет, преподаватель, аудитория (напр. 612), тема лабы...",
+        prefix_icon=ft.Icons.SEARCH_ROUNDED,
+        autofocus=True,
+        dense=True,
+        text_size=13,
+    )
+
+    results_col = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
+
+    def perform_search(e=None):
+        q = search_input.value.strip()
+        results_col.controls.clear()
+
+        if len(q) < 2:
+            results_col.controls.append(
+                ft.Container(
+                    padding=20,
+                    alignment=ft.Alignment.CENTER,
+                    content=ft.Text("Введите хотя бы 2 символа для поиска...", size=12, color=ft.Colors.GREY_400, italic=True),
+                )
+            )
+            page.update()
+            return
+
+        labs, slots, events = search_all_data(q)
+        total_found = len(labs) + len(slots) + len(events)
+
+        if total_found == 0:
+            results_col.controls.append(
+                ft.Container(
+                    padding=24,
+                    alignment=ft.Alignment.CENTER,
+                    content=ft.Column(
+                        controls=[
+                            ft.Icon(ft.Icons.SEARCH_OFF_ROUNDED, size=40, color=ft.Colors.GREY_400),
+                            ft.Text("Ничего не найдено", size=13, color=ft.Colors.GREY_400, weight=ft.FontWeight.W_600),
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=6,
+                    ),
+                )
+            )
+            page.update()
+            return
+
+        if labs:
+            results_col.controls.append(
+                ft.Text(f"🧪 Лабораторные работы ({len(labs)}):", weight=ft.FontWeight.BOLD, size=13, color="#38BDF8")
+            )
+            for l_id, s_id, s_name, l_num, st, l_title, l_goal, l_desc, l_comm in labs:
+                cfg = STATUS_CONFIG.get(st, STATUS_CONFIG[0])
+                sub_txt = f"{l_title}" if l_title else (f"Цель: {l_goal}" if l_goal else cfg["label"])
+                
+                results_col.controls.append(
+                    ft.Container(
+                        bgcolor="#1E293B",
+                        padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                        border_radius=8,
+                        border=ft.Border.all(1, "#334155"),
+                        content=ft.Row(
+                            controls=[
+                                ft.Container(
+                                    width=32,
+                                    height=32,
+                                    border_radius=6,
+                                    bgcolor=cfg["color"],
+                                    alignment=ft.Alignment.CENTER,
+                                    content=ft.Text(str(l_num), weight=ft.FontWeight.BOLD, color=cfg["text_color"], size=13),
+                                ),
+                                ft.Column(
+                                    controls=[
+                                        ft.Text(f"{s_name} — Лаба №{l_num}", weight=ft.FontWeight.BOLD, size=13, color="white"),
+                                        ft.Text(sub_txt, size=11, color=ft.Colors.GREY_300, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                    ],
+                                    spacing=2,
+                                    expand=True,
+                                ),
+                                ft.Icon(ft.Icons.ARROW_FORWARD_IOS_ROUNDED, size=14, color=ft.Colors.GREY_400),
+                            ],
+                            spacing=10,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        on_click=lambda ev, lid=l_id, sid=s_id, sn=s_name: (
+                            page.pop_dialog(),
+                            open_lab_editor(page, refresh_ui, lid, sid, sn),
+                        ),
+                    )
+                )
+
+        if slots:
+            if labs:
+                results_col.controls.append(ft.Divider(height=6, color="#334155"))
+            results_col.controls.append(
+                ft.Text(f"🎓 Занятия в расписании ({len(slots)}):", weight=ft.FontWeight.BOLD, size=13, color="#38BDF8")
+            )
+            for sc_id, s_name, dow, wks, l_date, l_type, st_t, end_t, room, teacher, note in slots:
+                t_cfg = LESSON_TYPE_CONFIG.get(l_type, LESSON_TYPE_CONFIG["ЛР"])
+                day_name = WEEKDAYS_FULL[dow] if 0 <= dow < len(WEEKDAYS_FULL) else ""
+                when_str = f"Дата: {format_date_ru(l_date)}" if l_date else f"{day_name} ({st_t}–{end_t})"
+                meta_sub = f"ауд. {room}" if room else "ауд. не указ."
+                if teacher:
+                    meta_sub += f" • {teacher}"
+
+                results_col.controls.append(
+                    ft.Container(
+                        bgcolor="#1E293B",
+                        padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                        border_radius=8,
+                        border=ft.Border.all(1, "#334155"),
+                        content=ft.Row(
+                            controls=[
+                                ft.Container(
+                                    padding=ft.Padding.symmetric(horizontal=6, vertical=3),
+                                    border_radius=4,
+                                    bgcolor=t_cfg["bg"],
+                                    border=ft.Border.all(1, t_cfg["color"]),
+                                    content=ft.Text(l_type, size=10, weight=ft.FontWeight.BOLD, color=t_cfg["color"]),
+                                ),
+                                ft.Column(
+                                    controls=[
+                                        ft.Text(s_name, weight=ft.FontWeight.BOLD, size=13, color="white"),
+                                        ft.Text(f"{when_str} • {meta_sub}", size=11, color=ft.Colors.GREY_300, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                    ],
+                                    spacing=2,
+                                    expand=True,
+                                ),
+                            ],
+                            spacing=10,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        on_click=lambda ev, scid=sc_id: (
+                            page.pop_dialog(),
+                            open_schedule_item_dialog(page, refresh_ui, show_toast, scid),
+                        ),
+                    )
+                )
+
+        if events:
+            if labs or slots:
+                results_col.controls.append(ft.Divider(height=6, color="#334155"))
+            results_col.controls.append(
+                ft.Text(f"📌 События ({len(events)}):", weight=ft.FontWeight.BOLD, size=13, color="#38BDF8")
+            )
+            for ev_id, ev_title, ev_desc, ev_date, dow, wks, st_t, end_t, teacher, room in events:
+                day_name = WEEKDAYS_FULL[dow] if 0 <= dow < len(WEEKDAYS_FULL) else ""
+                when_str = f"Дата: {format_date_ru(ev_date)}" if ev_date else f"{day_name} ({st_t}–{end_t})"
+                meta_sub = f"ауд. {room}" if room else ""
+                if teacher:
+                    meta_sub = f"{meta_sub} • {teacher}".strip(" •")
+
+                results_col.controls.append(
+                    ft.Container(
+                        bgcolor="#1E293B",
+                        padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                        border_radius=8,
+                        border=ft.Border.all(1, "#475569"),
+                        content=ft.Row(
+                            controls=[
+                                ft.Container(
+                                    padding=ft.Padding.symmetric(horizontal=6, vertical=3),
+                                    border_radius=4,
+                                    bgcolor="#1E293B",
+                                    border=ft.Border.all(1, "#A5B4FC"),
+                                    content=ft.Text("СОБ", size=10, weight=ft.FontWeight.BOLD, color="#A5B4FC"),
+                                ),
+                                ft.Column(
+                                    controls=[
+                                        ft.Text(ev_title, weight=ft.FontWeight.BOLD, size=13, color="white"),
+                                        ft.Text(f"{when_str}" + (f" • {meta_sub}" if meta_sub else ""), size=11, color=ft.Colors.GREY_300, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                    ],
+                                    spacing=2,
+                                    expand=True,
+                                ),
+                            ],
+                            spacing=10,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        on_click=lambda ev, eid=ev_id: (
+                            page.pop_dialog(),
+                            open_event_dialog(page, refresh_ui, eid),
+                        ),
+                    )
+                )
+
+        page.update()
+
+    search_input.on_change = perform_search
+
+    dlg = ft.AlertDialog(
+        inset_padding=ft.Padding.symmetric(horizontal=12, vertical=16),
+        title_padding=ft.Padding.only(left=16, right=8, top=10, bottom=0),
+        content_padding=ft.Padding.only(left=14, right=14, top=6, bottom=12),
+        title=make_dialog_header(page, "🔍 Поиск по приложению"),
+        content=ft.Container(
+            width=420,
+            height=460,
+            content=ft.Column(
+                controls=[
+                    search_input,
+                    ft.Divider(height=6, color="#334155"),
+                    results_col,
+                ],
+                spacing=8,
+                expand=True,
+            ),
+        ),
+    )
+    page.show_dialog(dlg)
+    perform_search()

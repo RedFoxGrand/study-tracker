@@ -1,9 +1,13 @@
+import base64
 import datetime
 import hashlib
 import json
+import os
+import shutil
 import sqlite3
 import urllib.error
 import urllib.request
+import zlib
 
 from config import (
     BASE_DEFENSE_TITLE,
@@ -29,6 +33,7 @@ NON_LAB_SUBJECTS = {
 def get_conn():
     conn = sqlite3.connect(DB_NAME)
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.create_function("lower", 1, lambda s: str(s).casefold() if s is not None else "")
     return conn
 
 
@@ -162,7 +167,6 @@ def init_db():
         )
     """)
 
-    # Проверяем, существует ли уже колонка 'url' в существующей таблице
     cur.execute("PRAGMA table_info(custom_themes)")
     cols = [col[1] for col in cur.fetchall()]
     if cols and "url" not in cols:
@@ -176,7 +180,6 @@ def init_db():
         )
     """)
 
-    # Сбрасываем старые Base64-строки или пути файлов, если они остались в настройках
     cur.execute("SELECT value FROM app_settings WHERE key = 'bg_image_url'")
     row = cur.fetchone()
     if row and row[0] and (row[0].startswith("data:image") or row[0].startswith("/data")):
@@ -197,6 +200,11 @@ def init_db():
     cur.execute("SELECT COUNT(*) FROM subjects WHERE is_tracked = 1")
     if cur.fetchone()[0] > 0:
         cur.execute("UPDATE app_settings SET value = '1' WHERE key = 'is_onboarded'")
+
+    cur.execute("PRAGMA table_info(schedule)")
+    sched_cols = [c[1] for c in cur.fetchall()]
+    if "orig_slot" not in sched_cols:
+        cur.execute("ALTER TABLE schedule ADD COLUMN orig_slot TEXT DEFAULT ''")
 
     cleanup_orphan_and_non_lab_subjects(cur)
     cur.execute("DELETE FROM schedule_events WHERE id = 13 OR title = 'выаыва'")
@@ -239,7 +247,7 @@ def ensure_group_labs_initialized(group_name: str):
     cur.execute("""
         SELECT DISTINCT s.id, s.name FROM schedule sc
         JOIN subjects s ON s.id = sc.subject_id
-        WHERE sc.group_name = ? AND sc.lesson_type = 'ЛР'
+        WHERE sc.group_name = ? AND sc.lesson_type = 'ЛР' AND s.is_tracked = 1
     """, (grp,))
     lr_subjects = cur.fetchall()
 
@@ -258,6 +266,21 @@ def ensure_group_labs_initialized(group_name: str):
     conn.commit()
     conn.close()
 
+def cycle_lab_status(lab_id: int):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT status FROM labs WHERE id = ?", (lab_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return
+    cur_status = row[0]
+    next_status = (cur_status + 1) % 4
+    comp_date = datetime.date.today().isoformat() if next_status == 3 else ""
+    cur.execute("UPDATE labs SET status = ?, completed_date = ? WHERE id = ?", (next_status, comp_date, lab_id))
+    ensure_base_step_for_lab(cur, lab_id, next_status)
+    conn.commit()
+    conn.close()
 
 def get_saved_groups() -> list:
     conn = get_conn()
@@ -421,6 +444,16 @@ def import_schedule_from_bsuir_api(group_number: str) -> tuple[bool, str]:
 
                 cur.execute(
                     """
+                    SELECT id FROM schedule_events
+                    WHERE group_name = ? AND day_of_week = ? AND start_time = ? AND is_api_synced = 0
+                    """,
+                    (grp, dow, st_time),
+                )
+                if cur.fetchone():
+                    continue
+
+                cur.execute(
+                    """
                     INSERT INTO schedule_events
                     (group_name, title, description, event_date, day_of_week, weeks,
                      start_time, end_time, teacher, room, is_api_synced)
@@ -441,14 +474,31 @@ def import_schedule_from_bsuir_api(group_number: str) -> tuple[bool, str]:
             preserved_note = saved_notes.get((subj_abbrev.casefold(), dow, st_time, l_type_raw, subg), "")
             note_str = preserved_note or (item.get("note") or "").strip()
 
+            slot_key = f"{subj_abbrev.casefold()}_{dow}_{st_time}_{subg}_{l_type_raw}"
+
+            cur.execute(
+                """
+                SELECT id FROM schedule
+                WHERE group_name = ?
+                  AND is_api_synced = 0
+                  AND (
+                      orig_slot = ?
+                      OR (day_of_week = ? AND start_time = ? AND (subgroup = ? OR subgroup = 0 OR ? = 0))
+                  )
+                """,
+                (grp, slot_key, dow, st_time, subg, subg),
+            )
+            if cur.fetchone():
+                continue
+
             cur.execute(
                 """
                 INSERT INTO schedule
                 (group_name, subject_id, day_of_week, weeks, lesson_date, subgroup, lesson_type,
-                 start_time, end_time, room, teacher, note, is_api_synced)
-                VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, 1)
+                 start_time, end_time, room, teacher, note, is_api_synced, orig_slot)
+                VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 """,
-                (grp, s_id, dow, weeks_str, subg, l_type_raw, st_time, end_time, room_str, teacher_str, note_str),
+                (grp, s_id, dow, weeks_str, subg, l_type_raw, st_time, end_time, room_str, teacher_str, note_str, slot_key),
             )
 
     sched_hash = hashlib.md5(json.dumps(schedules_dict, sort_keys=True).encode("utf-8")).hexdigest()
@@ -712,11 +762,15 @@ def compute_subject_lr_analytics() -> dict:
             wk = get_academic_week_number(cur_dt, sem_start)
             dow = cur_dt.weekday()
             iso_cur = cur_dt.isoformat()
+            now_str = datetime.datetime.now().strftime("%H:%M")
             for sl in slots:
                 is_match = (
                     (sl["lesson_date"] == iso_cur)
                     or (not sl["lesson_date"] and sl["dow"] == dow and wk in sl["weeks"])
                 )
+                if is_match and cur_dt == today and now_str > sl["end_time"]:
+                    continue
+
                 if is_match:
                     if cur_dt <= sem_end:
                         remaining_in_sem += 1
@@ -775,3 +829,165 @@ def delete_custom_theme(theme_id: int):
     cur.execute("DELETE FROM custom_themes WHERE id = ?", (theme_id,))
     conn.commit()
     conn.close()
+
+def export_db_to_downloads() -> tuple[bool, str]:
+    from config import get_db_path
+    db_path = get_db_path()
+    if not os.path.exists(db_path):
+        return False, "Файл базы данных не найден."
+
+    dl_dir = "/storage/emulated/0/Download"
+    if not os.path.exists(dl_dir):
+        dl_dir = os.path.expanduser("~/Downloads")
+        if not os.path.exists(dl_dir):
+            dl_dir = os.path.dirname(db_path)
+
+    dest_file = os.path.join(dl_dir, "study_tracker_backup.db")
+    try:
+        shutil.copyfile(db_path, dest_file)
+        return True, "Файл labs_tracker_backup.db сохранён в Загрузки!"
+    except Exception as ex:
+        return False, f"Ошибка записи файла: {ex}"
+
+def export_db_to_json() -> str:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+    tables = [r[0] for r in cur.fetchall()]
+    data = {}
+    for t in tables:
+        cur.execute(f"PRAGMA table_info({t})")
+        cols = [c[1] for c in cur.fetchall()]
+        cur.execute(f"SELECT * FROM {t}")
+        rows = cur.fetchall()
+        data[t] = {"cols": cols, "rows": rows}
+    conn.close()
+
+    raw_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    compressed = zlib.compress(raw_json.encode("utf-8"), level=9)
+    return base64.b64encode(compressed).decode("utf-8")
+
+
+def import_db_from_json(raw_input: str) -> tuple[bool, str]:
+    s = raw_input.strip()
+    if not s:
+        return False, "Строка бэкапа пуста."
+
+    try:
+        if s.startswith("{"):
+            data = json.loads(s)
+        else:
+            decompressed = zlib.decompress(base64.b64decode(s.encode("utf-8")))
+            data = json.loads(decompressed.decode("utf-8"))
+        if not isinstance(data, dict):
+            return False, "Неверный формат данных бэкапа."
+    except Exception as ex:
+        return False, f"Ошибка расшифровки бэкапа: {ex}"
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("PRAGMA foreign_keys = OFF")
+        for table, content in data.items():
+            cols = content.get("cols", [])
+            rows = content.get("rows", [])
+            if not cols:
+                continue
+            cur.execute(f"DELETE FROM {table}")
+            placeholders = ", ".join(["?"] * len(cols))
+            col_names = ", ".join([f'"{c}"' for c in cols])
+            cur.executemany(f"INSERT OR REPLACE INTO {table} ({col_names}) VALUES ({placeholders})", rows)
+        conn.commit()
+        cur.execute("PRAGMA foreign_keys = ON")
+    except Exception as ex:
+        conn.rollback()
+        conn.close()
+        return False, f"Ошибка восстановления: {ex}"
+
+    conn.close()
+    _SETTINGS_CACHE.clear()
+    return True, "Все данные успешно восстановлены!"
+
+def search_all_data(query: str) -> tuple[list, list, list]:
+    clean_q = query.strip()
+    if not clean_q:
+        return [], [], []
+
+    q_pattern = f"%{clean_q.casefold()}%"
+    main_grp = get_setting("main_group", "")
+    view_grp = get_setting("view_group", main_grp)
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT l.id, s.id, s.name, l.lab_num, l.status, l.title, l.goal, l.description, l.comment
+        FROM labs l
+        JOIN subjects s ON s.id = l.subject_id
+        WHERE s.group_name = ? AND s.is_tracked = 1
+          AND (
+              LOWER(s.name) LIKE ?
+              OR LOWER(l.title) LIKE ?
+              OR LOWER(l.goal) LIKE ?
+              OR LOWER(l.description) LIKE ?
+              OR LOWER(l.comment) LIKE ?
+              OR CAST(l.lab_num AS TEXT) = ?
+          )
+        ORDER BY s.name ASC, l.lab_num ASC
+    """, (main_grp, q_pattern, q_pattern, q_pattern, q_pattern, q_pattern, clean_q))
+    found_labs = cur.fetchall()
+
+    cur.execute("""
+        SELECT sc.id, s.name, sc.day_of_week, sc.weeks, sc.lesson_date,
+               sc.lesson_type, sc.start_time, sc.end_time, sc.room, sc.teacher, sc.note
+        FROM schedule sc
+        JOIN subjects s ON s.id = sc.subject_id
+        WHERE sc.group_name = ?
+          AND (
+              LOWER(s.name) LIKE ?
+              OR LOWER(sc.teacher) LIKE ?
+              OR LOWER(sc.room) LIKE ?
+              OR LOWER(sc.note) LIKE ?
+          )
+        ORDER BY sc.day_of_week ASC, sc.start_time ASC
+    """, (view_grp, q_pattern, q_pattern, q_pattern, q_pattern))
+    found_slots = cur.fetchall()
+
+    cur.execute("""
+        SELECT id, title, description, event_date, day_of_week, weeks,
+               start_time, end_time, teacher, room
+        FROM schedule_events
+        WHERE group_name = ?
+          AND (
+              LOWER(title) LIKE ?
+              OR LOWER(description) LIKE ?
+              OR LOWER(teacher) LIKE ?
+              OR LOWER(room) LIKE ?
+          )
+        ORDER BY day_of_week ASC, start_time ASC
+    """, (view_grp, q_pattern, q_pattern, q_pattern, q_pattern))
+    found_events = cur.fetchall()
+
+    conn.close()
+    return found_labs, found_slots, found_events
+
+def import_db_from_downloads() -> tuple[bool, str]:
+    from config import get_db_path
+    db_path = get_db_path()
+
+    dl_dir = "/storage/emulated/0/Download"
+    if not os.path.exists(dl_dir):
+        dl_dir = os.path.expanduser("~/Downloads")
+        if not os.path.exists(dl_dir):
+            dl_dir = os.path.dirname(db_path)
+
+    source_file = os.path.join(dl_dir, "study_tracker_backup.db")
+    if not os.path.exists(source_file):
+        return False, "Файл study_tracker_backup.db в папке Загрузки не найден!"
+
+    try:
+        shutil.copyfile(source_file, db_path)
+        _SETTINGS_CACHE.clear()
+        return True, "База успешно восстановлена из файла!"
+    except Exception as ex:
+        return False, f"Ошибка восстановления из файла: {ex}"

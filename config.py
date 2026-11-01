@@ -48,12 +48,10 @@ WEEKDAYS_FULL = [
 
 
 def get_db_path():
-    # Если запущено на телефоне в APK — пишем в закрытое хранилище Android
     app_storage = os.environ.get("FLET_APP_STORAGE_DATA")
     if app_storage:
         os.makedirs(app_storage, exist_ok=True)
         return os.path.join(app_storage, "labs_tracker.db")
-    # На компьютере при разработке сохраняем рядом с main.py
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "labs_tracker.db")
 
 DB_NAME = get_db_path()
