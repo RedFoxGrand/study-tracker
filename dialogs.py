@@ -32,6 +32,7 @@ from database import (
     import_db_from_json,
     import_schedule_from_bsuir_api,
     renumber_subject_labs,
+    reset_database_to_clean_slate,
     search_all_data,
     set_setting,
 )
@@ -2071,6 +2072,44 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
             show_toast("🎉 База успешно восстановлена из файла!", is_urgent=False)
         page.update()
 
+    def confirm_reset_database(e):
+        def do_reset(ev):
+            reset_database_to_clean_slate()
+            page.pop_dialog()
+            page.pop_dialog()
+            refresh_ui()
+            show_toast("✨ Все данные сброшены до чистой установки!", is_urgent=False)
+
+        dlg_confirm = ft.AlertDialog(
+            title=make_dialog_header(page, "⚠️ Полный сброс данных", color="#EF4444"),
+            content=ft.Column(
+                controls=[
+                    ft.Text(
+                        "Вы действительно хотите сбросить все данные до чистой установки?\n\n"
+                        "Будут безвозвратно удалены:\n"
+                        "• Все предметы и лабораторные работы\n"
+                        "• Все расписания и сохранённые группы\n"
+                        "• Кастомные темы и настройки\n\n"
+                        "Перед сбросом рекомендуется сделать бэкап (в Загрузки или в буфер).",
+                        size=12.5,
+                        color=ft.Colors.GREY_300,
+                    ),
+                ],
+                tight=True,
+                spacing=6,
+            ),
+            actions=[
+                ft.TextButton("Отмена", on_click=lambda ev: page.pop_dialog()),
+                ft.FilledButton(
+                    "Сбросить всё",
+                    style=ft.ButtonStyle(bgcolor=ft.Colors.RED_600, color="white"),
+                    on_click=do_reset,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.show_dialog(dlg_confirm)
+
     backup_block = ft.Column(
         controls=[
             ft.Text("Экспорт:", size=11, color=ft.Colors.GREY_400),
@@ -2084,6 +2123,17 @@ def open_schedule_settings_dialog(page: ft.Page, refresh_ui, show_toast):
                 ft.FilledButton("Из буфера", icon=ft.Icons.RESTORE_ROUNDED, expand=True, on_click=open_import_dialog),
             ], spacing=6),
             backup_status,
+            ft.Divider(height=6, color="#334155"),
+            ft.OutlinedButton(
+                "Сбросить все данные",
+                icon=ft.Icons.DELETE_FOREVER_ROUNDED,
+                style=ft.ButtonStyle(
+                    color=ft.Colors.RED_400,
+                    side=ft.BorderSide(1, "#EF4444"),
+                ),
+                expand=True,
+                on_click=confirm_reset_database,
+            ),
         ],
         spacing=6,
     )

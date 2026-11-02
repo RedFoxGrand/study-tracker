@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import os
 
 import flet as ft
 from components import build_collapsible_alert_box, make_badged_icon
@@ -27,6 +28,7 @@ from database import (
     get_subjects_with_labs,
     get_summary_counts,
     init_db,
+    reset_database_to_clean_slate,
     set_setting,
 )
 from dialogs import (
@@ -79,6 +81,59 @@ def main(page: ft.Page):
     )
 
     init_db()
+
+    from config import get_db_path
+
+    cache_marker = os.path.join(
+        os.path.dirname(get_db_path()), "..", "cache", "app_installed.marker"
+    )
+
+    if not os.path.exists(cache_marker):
+        try:
+            os.makedirs(os.path.dirname(cache_marker), exist_ok=True)
+            with open(cache_marker, "w") as f:
+                f.write("installed")
+        except Exception:
+            pass
+
+        counts, total = get_summary_counts()
+        counts, total = get_summary_counts()
+        if total > 0:
+            def choose_clean_slate(e):
+                page.pop_dialog()
+                reset_database_to_clean_slate()
+                refresh_ui()
+                show_in_app_toast("✨ Приложение запущено с чистого листа!")
+
+            def keep_cloud_data(e):
+                page.pop_dialog()
+                show_in_app_toast("Облачные данные сохранены!")
+
+            dlg_choice = ft.AlertDialog(
+                title=ft.Row(
+                    [
+                        ft.Icon(ft.Icons.CLOUD_DONE_ROUNDED, color="#38BDF8", size=24),
+                        ft.Text("Обнаружен прогресс", weight=ft.FontWeight.BOLD, size=17),
+                    ],
+                    spacing=8,
+                ),
+                content=ft.Text(
+                    "Облако Google восстановило предыдущую копию данных.\n\n"
+                    "Вы хотите продолжить со старыми данными или начать с чистого листа?",
+                    size=13,
+                    color=ft.Colors.GREY_300,
+                ),
+                actions=[
+                    ft.TextButton(
+                        "Начать заново",
+                        on_click=choose_clean_slate,
+                        style=ft.ButtonStyle(color=ft.Colors.RED_400),
+                    ),
+                    ft.FilledButton("Оставить прогресс", on_click=keep_cloud_data),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            )
+            page.show_dialog(dlg_choice)
 
     list_filter_state = {"mode": "unsubmitted"}
     schedule_filter_state = {"view": "all", "days_limit": 14}
