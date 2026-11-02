@@ -104,12 +104,12 @@ def main(page: ft.Page):
                 reset_database_to_clean_slate()
                 mark_app_initialized()
                 refresh_ui()
-                show_in_app_toast("✨ Начинаем семестр с чистого листа!")
+                show_in_app_toast("✨ Начинаем семестр с чистого листа!", is_urgent=False)
 
             def keep_cloud_data(e):
                 page.pop_dialog()
                 mark_app_initialized()
-                show_in_app_toast("Облачный прогресс сохранён!")
+                show_in_app_toast("Облачный прогресс сохранён!", is_urgent=False)
 
             dlg_choice = ft.AlertDialog(
                 title=ft.Row(
