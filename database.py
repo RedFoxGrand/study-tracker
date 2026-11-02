@@ -833,63 +833,44 @@ def delete_custom_theme(theme_id: int):
 
 def export_db_to_downloads() -> tuple[bool, str]:
     from config import get_db_path
-
     db_path = get_db_path()
     if not os.path.exists(db_path):
-        return False, 'Файл базы данных не найден.'
+        return False, "Файл базы данных не найден."
 
-    dl_dir = '/storage/emulated/0/Download'
+    dl_dir = "/storage/emulated/0/Download"
     if not os.path.exists(dl_dir):
-        dl_dir = os.path.expanduser('~/Downloads')
+        dl_dir = os.path.expanduser("~/Downloads")
         if not os.path.exists(dl_dir):
             dl_dir = os.path.dirname(db_path)
 
-    dest_file = os.path.join(dl_dir, 'study_tracker_backup.db')
+    dest_file = os.path.join(dl_dir, "study_tracker_backup.db")
     try:
         shutil.copyfile(db_path, dest_file)
-        return True, 'Файл study_tracker_backup.db сохранён в Загрузки!'
-    except PermissionError:
-        ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        alt_file = os.path.join(dl_dir, f'study_tracker_backup_{ts}.db')
-        try:
-            shutil.copyfile(db_path, alt_file)
-            return (
-                True,
-                f'Сохранено как {os.path.basename(alt_file)} (старый файл был защищён)',
-            )
-        except Exception as ex2:
-            return False, f'Ошибка записи файла: {ex2}'
+        return True, "Файл labs_tracker_backup.db сохранён в Загрузки!"
     except Exception as ex:
-        return False, f'Ошибка записи файла: {ex}'
+        return False, f"Ошибка записи файла: {ex}"
 
 
 def import_db_from_downloads() -> tuple[bool, str]:
     from config import get_db_path
-
     db_path = get_db_path()
 
-    dl_dir = '/storage/emulated/0/Download'
+    dl_dir = "/storage/emulated/0/Download"
     if not os.path.exists(dl_dir):
-        dl_dir = os.path.expanduser('~/Downloads')
+        dl_dir = os.path.expanduser("~/Downloads")
         if not os.path.exists(dl_dir):
             dl_dir = os.path.dirname(db_path)
 
-    backup_files = glob.glob(os.path.join(dl_dir, 'study_tracker_backup*.db'))
-    if not backup_files:
-        return False, 'Файлы study_tracker_backup*.db в Загрузках не найдены!'
-
-    backup_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-    source_file = backup_files[0]
+    source_file = os.path.join(dl_dir, "study_tracker_backup.db")
+    if not os.path.exists(source_file):
+        return False, "Файл study_tracker_backup.db в папке Загрузки не найден!"
 
     try:
         shutil.copyfile(source_file, db_path)
         _SETTINGS_CACHE.clear()
-        return (
-            True,
-            f'База успешно восстановлена из {os.path.basename(source_file)}!',
-        )
+        return True, "База успешно восстановлена из файла!"
     except Exception as ex:
-        return False, f'Ошибка восстановления: {ex}'
+        return False, f"Ошибка восстановления из файла: {ex}"
 
 def export_db_to_json() -> str:
     conn = get_conn()

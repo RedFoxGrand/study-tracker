@@ -83,7 +83,6 @@ def main(page: ft.Page):
     init_db()
 
     from config import get_db_path
-
     cache_dir = os.path.join(os.path.dirname(get_db_path()), "..", "cache")
     cache_marker = os.path.join(cache_dir, "app_installed.marker")
 
