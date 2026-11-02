@@ -84,30 +84,33 @@ def main(page: ft.Page):
 
     from config import get_db_path
 
-    cache_marker = os.path.join(
-        os.path.dirname(get_db_path()), "..", "cache", "app_installed.marker"
-    )
+    cache_dir = os.path.join(os.path.dirname(get_db_path()), "..", "cache")
+    cache_marker = os.path.join(cache_dir, "app_installed.marker")
 
     if not os.path.exists(cache_marker):
-        try:
-            os.makedirs(os.path.dirname(cache_marker), exist_ok=True)
-            with open(cache_marker, "w") as f:
-                f.write("installed")
-        except Exception:
-            pass
+        counts = get_summary_counts()
+        total = sum(counts.values())
 
-        counts, total = get_summary_counts()
-        counts, total = get_summary_counts()
+        def mark_app_initialized():
+            try:
+                os.makedirs(cache_dir, exist_ok=True)
+                with open(cache_marker, "w") as f:
+                    f.write("installed")
+            except Exception:
+                pass
+
         if total > 0:
             def choose_clean_slate(e):
                 page.pop_dialog()
                 reset_database_to_clean_slate()
+                mark_app_initialized()
                 refresh_ui()
-                show_in_app_toast("✨ Приложение запущено с чистого листа!")
+                show_in_app_toast("✨ Начинаем семестр с чистого листа!")
 
             def keep_cloud_data(e):
                 page.pop_dialog()
-                show_in_app_toast("Облачные данные сохранены!")
+                mark_app_initialized()
+                show_in_app_toast("Облачный прогресс сохранён!")
 
             dlg_choice = ft.AlertDialog(
                 title=ft.Row(
@@ -118,14 +121,14 @@ def main(page: ft.Page):
                     spacing=8,
                 ),
                 content=ft.Text(
-                    "Облако Google восстановило предыдущую копию данных.\n\n"
-                    "Вы хотите продолжить со старыми данными или начать с чистого листа?",
+                    "Облако Google восстановило данные предыдущей установки.\n\n"
+                    "Вы хотите продолжить работу со старыми данными или начать с чистого листа?",
                     size=13,
                     color=ft.Colors.GREY_300,
                 ),
                 actions=[
                     ft.TextButton(
-                        "Начать заново",
+                        "С чистого листа",
                         on_click=choose_clean_slate,
                         style=ft.ButtonStyle(color=ft.Colors.RED_400),
                     ),
@@ -134,6 +137,8 @@ def main(page: ft.Page):
                 actions_alignment=ft.MainAxisAlignment.END,
             )
             page.show_dialog(dlg_choice)
+        else:
+            mark_app_initialized()
 
     list_filter_state = {"mode": "unsubmitted"}
     schedule_filter_state = {"view": "all", "days_limit": 14}

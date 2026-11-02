@@ -862,45 +862,6 @@ def export_db_to_downloads() -> tuple[bool, str]:
     except Exception as ex:
         return False, f'Ошибка записи файла: {ex}'
 
-import glob
-import shutil
-
-
-def export_db_to_downloads() -> tuple[bool, str]:
-  from config import get_db_path
-
-  db_path = get_db_path()
-  if not os.path.exists(db_path):
-    return False, 'Файл базы данных не найден.'
-
-  dl_dir = '/storage/emulated/0/Download'
-  if not os.path.exists(dl_dir):
-    dl_dir = os.path.expanduser('~/Downloads')
-    if not os.path.exists(dl_dir):
-      dl_dir = os.path.dirname(db_path)
-
-  # 1. Сначала пробуем перезаписать стандартный файл
-  dest_file = os.path.join(dl_dir, 'study_tracker_backup.db')
-  try:
-    shutil.copyfile(db_path, dest_file)
-    return True, 'Файл study_tracker_backup.db сохранён в Загрузки!'
-  except PermissionError:
-    # 2. Если файл остался от предыдущей установки (чужой UID) —
-    # создаём файл с датой и временем, это разрешено системой всегда
-    ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    alt_file = os.path.join(dl_dir, f'study_tracker_backup_{ts}.db')
-    try:
-      shutil.copyfile(db_path, alt_file)
-      return (
-          True,
-          f'Сохранено как {os.path.basename(alt_file)} (старый файл был'
-          ' защищён)',
-      )
-    except Exception as ex2:
-      return False, f'Ошибка записи файла: {ex2}'
-  except Exception as ex:
-    return False, f'Ошибка записи файла: {ex}'
-
 
 def import_db_from_downloads() -> tuple[bool, str]:
     from config import get_db_path
